@@ -8,6 +8,7 @@ pub mod extract;
 pub mod fs;
 pub mod globs;
 pub mod ignore_rules;
+pub mod index;
 pub mod model;
 pub mod pattern;
 pub mod position;
