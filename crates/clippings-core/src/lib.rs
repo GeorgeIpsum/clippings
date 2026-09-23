@@ -5,6 +5,7 @@ pub mod colour_names;
 pub mod colours;
 pub mod comments;
 pub mod config;
+pub mod decorations;
 pub mod error;
 pub mod extract;
 pub mod fs;
