@@ -283,9 +283,10 @@ def main() -> int:
                     break
         summary["first_tree_ms"] = first_tree_ms
         summary["baseline_count"] = baseline
+        summary["count_matches_scan"] = baseline == scan_todos
         if baseline != scan_todos:
             log(
-                f"WARNING: LSP baseline count {baseline} != "
+                f"FAILED: LSP baseline count {baseline} != "
                 f"clippings scan count {scan_todos}"
             )
 
@@ -348,7 +349,26 @@ def main() -> int:
         saw_scanning = any(p["scanning"] for p in statuses)
         counts = [count_from_status(p) for p in statuses]
         saw_count_change = any(n is not None and n != baseline for n in counts)
-        node_modules_ok = not saw_scanning and not saw_count_change
+        # Silence alone would also fit a hung server: require an answer.
+        client.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "clippings/children",
+                "params": {"parent": None},
+            }
+        )
+        alive_deadline = time.monotonic() + 2.0
+        alive = False
+        while not alive:
+            m = client.recv(deadline=alive_deadline)
+            if m is None:
+                break
+            if m.get("method") == "clippings/status":
+                saw_scanning |= bool(m["params"]["scanning"])
+            alive = m.get("id") == 2 and "result" in m
+        summary["node_modules_alive"] = alive
+        node_modules_ok = alive and not saw_scanning and not saw_count_change
         log(
             f"node_modules events: {len(statuses)} status message(s) in "
             f"{NODE_MODULES_WINDOW_S:.0f}s, scanning seen={saw_scanning}, "
@@ -400,6 +420,7 @@ def main() -> int:
         error is None
         and clean
         and summary.get("node_modules_ok") is True
+        and summary.get("count_matches_scan") is True
         and summary.get("exit_code") == 0
     )
     return 0 if ok else 1
