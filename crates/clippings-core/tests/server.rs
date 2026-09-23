@@ -87,7 +87,7 @@ impl Client {
                 Message::Response(r) if r.id == id => {
                     return match r.response_result {
                         Ok(v) => json!({ "result": v }),
-                        Err(e) => json!({ "error": e.message }),
+                        Err(e) => json!({ "error": e.message, "code": e.code }),
                     };
                 }
                 other => self.backlog.push(other),
@@ -99,11 +99,16 @@ impl Client {
         self.request_raw(method, params)["result"].clone()
     }
 
-    /// Waits for a notification (or server request) with `method` matching `pred`.
+    /// Waits for a notification (or server request) with `method` matching
+    /// `pred`, and forgets it and every message received before it, so
+    /// successive calls wait for messages in the order the server sent them.
     fn expect(&mut self, method: &str, pred: impl Fn(&Value) -> bool) -> Value {
         if let Some(i) = self.backlog.iter().position(|m| matches(m, method, &pred)) {
-            return params(&self.backlog.remove(i));
+            let found = params(&self.backlog[i]);
+            self.backlog.drain(..=i);
+            return found;
         }
+        self.backlog.clear();
         let deadline = Instant::now() + WAIT;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -115,20 +120,20 @@ impl Client {
             if matches(&msg, method, &pred) {
                 return params(&msg);
             }
-            self.backlog.push(msg);
         }
     }
 
-    /// Waits until the tree has settled after a scan, then returns top-level labels.
+    /// Waits until a scan has finished and the tree has been rebuilt from
+    /// it, then returns top-level labels. The workspace must have todos, so
+    /// the rebuild changes the tree.
     fn settled_top(&mut self) -> Vec<String> {
         self.expect("clippings/status", |s| s["scanning"] == false);
-        std::thread::sleep(Duration::from_millis(200));
+        self.expect("clippings/treeChanged", |_| true);
         labels(&self.request("clippings/children", json!({ "parent": null })))
     }
 
-    /// Forgets every message received so far, so the next `expect` waits for a fresh one.
+    /// Forgets every message received so far.
     fn drain(&mut self) {
-        std::thread::sleep(Duration::from_millis(100));
         self.backlog.clear();
         while self.conn.receiver.try_recv().is_ok() {}
     }
@@ -226,7 +231,7 @@ fn open_buffers_get_styles_then_decorations_and_feed_the_tree() {
     }));
     let deco = c.expect("clippings/decorations", |d| d["version"] == 2);
     assert!(deco["ranges"].get("TODO").is_none() && deco["ranges"].get("BUG").is_some());
-    std::thread::sleep(Duration::from_millis(400));
+    c.expect("clippings/treeChanged", |_| true);
     let root_id = c.children(None)["nodes"][0]["id"]
         .as_str()
         .unwrap()
@@ -255,7 +260,7 @@ fn open_buffers_get_styles_then_decorations_and_feed_the_tree() {
         "textDocument/didClose",
         json!({ "textDocument": { "uri": uri } }),
     );
-    std::thread::sleep(Duration::from_millis(300));
+    c.expect("clippings/treeChanged", |_| true);
     assert_eq!(
         labels(&c.children(Some(&file_id))),
         vec!["FIXME beta"],
@@ -323,7 +328,7 @@ fn configuration_changes_rescan_or_rebuild() {
     c.notify("clippings/configure", s);
     c.expect("clippings/status", |st| st["scanning"] == true);
     c.expect("clippings/status", |st| st["scanning"] == false);
-    std::thread::sleep(Duration::from_millis(200));
+    c.expect("clippings/treeChanged", |_| true);
     assert_eq!(labels(&c.children(Some(&root_id))), vec!["a.ts (src)"]);
 
     let exported = c.request("clippings/export", json!({}));
@@ -336,11 +341,34 @@ fn invalid_regex_reports_an_error_and_keeps_the_tree() {
     let (_t, root) = workspace();
     let mut c = Client::start(&root, settings(), true);
     c.settled_top();
+    let tree = |c: &mut Client| {
+        let top = c.children(None);
+        let root_id = top["nodes"][0]["id"].as_str().unwrap().to_string();
+        (labels(&top), labels(&c.children(Some(&root_id))))
+    };
+    let before = tree(&mut c);
+    assert_eq!(before.1, vec!["src", "b.ts"]);
     let mut s = settings();
     s["regex"] = json!({ "regex": "(unclosed" });
     c.notify("clippings/configure", s);
     let st = c.expect("clippings/status", |st| st["error"].is_string());
     assert!(st["error"].as_str().unwrap().contains("regex"));
+    // The configure also rescans, with the last good pattern.
+    c.expect("clippings/status", |st| {
+        st["scanning"] == false && st["error"].is_string()
+    });
+    // A file event forces a view rebuild after the rescan, so the tree read
+    // next reflects the rescanned index: the old files plus the new one,
+    // scanned with the last good pattern.
+    std::fs::write(root.join("c.ts"), "// TODO gamma\n").unwrap();
+    c.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({ "changes": [{ "uri": file_uri(&root.join("c.ts")), "type": 1 }] }),
+    );
+    c.expect("clippings/treeChanged", |_| true);
+    let after = tree(&mut c);
+    assert_eq!(after.0, before.0, "the tree is kept");
+    assert_eq!(after.1, vec!["src", "b.ts", "c.ts"], "the tree is kept");
     c.shutdown();
 }
 
@@ -358,10 +386,11 @@ fn without_dynamic_registration_notify_watches_the_disk() {
     let (_t, root) = workspace();
     let mut c = Client::start(&root, settings(), false);
     c.settled_top();
-    std::thread::sleep(Duration::from_millis(300));
-    std::fs::write(root.join("c.ts"), "// XXX from disk\n").unwrap();
     let deadline = Instant::now() + WAIT;
     loop {
+        // Rewritten on every poll: a write made before the watcher's stream
+        // has started may never be reported.
+        std::fs::write(root.join("c.ts"), "// XXX from disk\n").unwrap();
         let root_id = c.children(None)["nodes"][0]["id"]
             .as_str()
             .unwrap()
@@ -372,5 +401,34 @@ fn without_dynamic_registration_notify_watches_the_disk() {
         assert!(Instant::now() < deadline, "notify never reported c.ts");
         std::thread::sleep(Duration::from_millis(100));
     }
+    c.shutdown();
+}
+
+#[test]
+fn an_unknown_request_gets_method_not_found() {
+    let (_t, root) = workspace();
+    let mut c = Client::start(&root, settings(), true);
+    let r = c.request_raw("clippings/noSuchMethod", json!({}));
+    assert_eq!(
+        r["code"],
+        json!(lsp_server::ErrorCode::MethodNotFound as i32)
+    );
+    assert!(r["error"]
+        .as_str()
+        .unwrap()
+        .contains("clippings/noSuchMethod"));
+    c.shutdown();
+}
+
+#[test]
+fn an_invalid_glob_is_reported_and_the_server_keeps_answering() {
+    let (_t, root) = workspace();
+    let mut s = settings();
+    s["filtering"] = json!({ "excludeGlobs": ["src/[abc"] });
+    let mut c = Client::start(&root, s, true);
+    let st = c.expect("clippings/status", |st| st["error"].is_string());
+    assert!(st["error"].as_str().unwrap().contains("src/[abc"), "{st}");
+    let r = c.request_raw("clippings/children", json!({ "parent": null }));
+    assert!(r["result"]["nodes"].is_array(), "{r}");
     c.shutdown();
 }

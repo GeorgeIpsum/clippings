@@ -96,7 +96,21 @@ impl Index {
         seen: &[PathBuf],
         complete: bool,
     ) {
-        for p in seen {
+        self.apply_walk_except(roots, files, seen, complete, |_| false);
+    }
+
+    /// [`Self::apply_walk`], except that entries for paths where `skip` is
+    /// true are neither replaced nor removed: file events updated them after
+    /// the walk may have read them, so the index already holds newer results.
+    pub fn apply_walk_except(
+        &mut self,
+        roots: &[PathBuf],
+        files: Vec<FileResult>,
+        seen: &[PathBuf],
+        complete: bool,
+        skip: impl Fn(&Path) -> bool,
+    ) {
+        for p in seen.iter().filter(|p| !skip(p)) {
             self.disk.remove(p);
         }
         let mut seen_set: HashSet<PathBuf> = if complete {
@@ -108,11 +122,13 @@ impl Index {
             if complete {
                 seen_set.insert(f.path.clone());
             }
-            self.disk.insert(f.path, f.todos);
+            if !skip(&f.path) {
+                self.disk.insert(f.path, f.todos);
+            }
         }
         if complete {
             self.disk.retain(|p, _| {
-                !roots.iter().any(|r| p.starts_with(r)) || seen_set.contains(p.as_path())
+                !roots.iter().any(|r| p.starts_with(r)) || seen_set.contains(p.as_path()) || skip(p)
             });
         }
     }
@@ -363,6 +379,37 @@ mod tests {
         i.apply_walk(&roots, vec![], &seen, true);
         assert!(i.disk(Path::new("/r/b.ts")).is_none());
         assert!(i.disk(Path::new("/r/a.ts")).is_none(), "seen without todos");
+    }
+
+    #[test]
+    fn apply_walk_except_leaves_skipped_paths_alone() {
+        let mut i = Index::new();
+        i.set_disk("/r/created.ts".into(), vec![todo("created")]);
+        i.set_disk("/r/edited.ts".into(), vec![todo("edited")]);
+        i.set_disk("/r/stale.ts".into(), vec![todo("stale")]);
+        let roots = vec![PathBuf::from("/r")];
+        let files = ["/r/deleted.ts", "/r/edited.ts", "/r/other.ts"]
+            .map(|p| FileResult {
+                path: p.into(),
+                todos: vec![todo("walk")],
+            })
+            .to_vec();
+        let skip = |p: &Path| p != Path::new("/r/other.ts") && p != Path::new("/r/stale.ts");
+        i.apply_walk_except(&roots, files, &[], true, skip);
+        assert!(i.disk(Path::new("/r/deleted.ts")).is_none(), "no ghost");
+        assert_eq!(
+            i.disk(Path::new("/r/edited.ts")).unwrap()[0].after,
+            "edited"
+        );
+        assert_eq!(
+            i.disk(Path::new("/r/created.ts")).unwrap()[0].after,
+            "created"
+        );
+        assert_eq!(i.disk(Path::new("/r/other.ts")).unwrap()[0].after, "walk");
+        assert!(
+            i.disk(Path::new("/r/stale.ts")).is_none(),
+            "unseen and not skipped"
+        );
     }
 
     #[test]

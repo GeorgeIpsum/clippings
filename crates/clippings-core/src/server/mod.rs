@@ -70,7 +70,10 @@ pub struct Server {
     roots: Roots,
     walked: Vec<PathBuf>,
     pattern: Arc<ScanPattern>,
+    /// A configuration error: invalid regex, glob or root.
     error: Option<String>,
+    /// The last full walk's error, cleared by the next walk that succeeds.
+    walk_error: Option<String>,
     admission: Arc<Admission>,
     index: Index,
     docs: Documents,
@@ -78,6 +81,10 @@ pub struct Server {
     active_uri: Option<String>,
     instance: String,
     scan_generation: u64,
+    /// Paths (files, or directories standing for everything below them)
+    /// that file events updated while the current full walk ran. The walk
+    /// may have read them before the event, so applying it leaves them alone.
+    touched: HashSet<PathBuf>,
     cancel: Arc<AtomicBool>,
     scanning: bool,
     interrupted: bool,
@@ -108,6 +115,14 @@ fn instance_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     format!("{:x}-{:x}", std::process::id(), nanos)
+}
+
+/// Runs a per-document computation, logging a panic and returning `None`
+/// so the caller keeps the document's previous state (spec 5.10).
+fn guarded<T>(uri: &str, what: &str, f: impl FnOnce() -> T) -> Option<T> {
+    catch_unwind(AssertUnwindSafe(f))
+        .map_err(|_| tracing::warn!("{what} of {uri} panicked; keeping its previous state"))
+        .ok()
 }
 
 fn folder_paths(folders: &[p::WorkspaceFolder]) -> Vec<PathBuf> {
@@ -154,13 +169,20 @@ impl Server {
             walked: vec![],
             pattern: Arc::new(pattern),
             error,
-            admission: Arc::new(Admission::new(&core, vec![], fs).expect("default admission")),
+            walk_error: None,
+            // A placeholder until `rebuild_scan_state`, which reports the
+            // user's invalid globs in the status instead of panicking.
+            admission: Arc::new(
+                Admission::new(&crate::config::CoreConfig::default(), vec![], fs)
+                    .expect("default admission"),
+            ),
             index: Index::new(),
             docs: Documents::default(),
             view: View::default(),
             active_uri: None,
             instance: instance_id(),
             scan_generation: 0,
+            touched: HashSet::new(),
             cancel: Arc::new(AtomicBool::new(false)),
             scanning: false,
             interrupted: false,
@@ -271,6 +293,7 @@ impl Server {
         self.cancel.store(true, Ordering::Relaxed);
         self.cancel = Arc::new(AtomicBool::new(false));
         self.scan_generation += 1;
+        self.touched.clear();
         self.scanning = true;
         self.interrupted = false;
         self.needs_scan = false;
@@ -320,6 +343,8 @@ impl Server {
     }
 
     fn scan_document(&self, doc: &Document) -> Vec<crate::model::Todo> {
+        #[cfg(test)]
+        tests::maybe_panic(&doc.uri);
         if !doc.admitted {
             return Vec::new();
         }
@@ -332,11 +357,14 @@ impl Server {
     }
 
     /// Rescans an open buffer and, when auto-refresh is on, feeds the index.
-    fn rescan_buffer(&mut self, uri: &str, now: Instant) {
+    /// Returns false when the scan panicked, leaving the previous state.
+    fn rescan_buffer(&mut self, uri: &str, now: Instant) -> bool {
         let Some(doc) = self.docs.get(uri).cloned() else {
-            return;
+            return true;
         };
-        let todos = self.scan_document(&doc);
+        let Some(todos) = guarded(uri, "scan", || self.scan_document(&doc)) else {
+            return false;
+        };
         if let Some(d) = self.docs.get_mut(uri) {
             d.todos = todos.clone();
         }
@@ -349,68 +377,125 @@ impl Server {
             });
             self.schedule_view(now, false);
         }
+        true
+    }
+
+    /// Records that a file event updated `path` (and everything below it),
+    /// so the running full walk does not overwrite it.
+    fn touch(&mut self, path: &Path) {
+        if self.scanning {
+            self.touched.insert(path.to_path_buf());
+        }
     }
 
     fn rescan_disk_file(&mut self, path: &Path) {
+        self.touch(path);
         match scan_file(self.fs.as_ref(), &self.pattern, path) {
             Ok(Some(todos)) => self.index.set_disk(path.to_path_buf(), todos),
             _ => self.index.remove_disk(path),
         }
     }
 
-    fn rewalk_dir(&mut self, dir: &Path) {
-        if !self.walked.iter().any(|r| dir.starts_with(r)) {
-            return;
+    /// The files a rewalk of `dir` visits, pruning directories as a full
+    /// walk does, or `None` when a full walk would never enter `dir`.
+    fn rewalk_candidates(&self, dir: &Path) -> Option<Vec<PathBuf>> {
+        if !self.walked.iter().any(|r| dir.starts_with(r))
+            || self.admission.prunes_dir(dir)
+            || self.admission.inside_pruned_dir(dir)
+        {
+            return None;
         }
-        let mut files = Vec::new();
-        let mut seen = Vec::new();
-        for entry in ignore::WalkBuilder::new(dir)
+        let admission = self.admission.clone();
+        let files = ignore::WalkBuilder::new(dir)
             .standard_filters(false)
+            .filter_entry(move |e| {
+                e.depth() == 0
+                    || !e.file_type().is_some_and(|t| t.is_dir())
+                    || !admission.prunes_dir(e.path())
+            })
             .build()
             .flatten()
-        {
-            let path = entry.path();
-            if !entry.file_type().is_some_and(|t| t.is_file()) || !self.admission.admits_disk(path)
-            {
+            .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
+            .map(|e| e.into_path())
+            .collect();
+        Some(files)
+    }
+
+    fn rewalk_dir(&mut self, dir: &Path) {
+        let Some(candidates) = self.rewalk_candidates(dir) else {
+            return;
+        };
+        let mut files = Vec::new();
+        let mut seen = Vec::new();
+        for path in candidates {
+            if !self.admission.admits_disk(&path) {
                 continue;
             }
-            if let Ok(Some(todos)) = scan_file(self.fs.as_ref(), &self.pattern, path) {
-                seen.push(path.to_path_buf());
+            if let Ok(Some(todos)) = scan_file(self.fs.as_ref(), &self.pattern, &path) {
+                seen.push(path.clone());
                 if !todos.is_empty() {
-                    files.push(crate::model::FileResult {
-                        path: path.to_path_buf(),
-                        todos,
-                    });
+                    files.push(crate::model::FileResult { path, todos });
                 }
             }
         }
+        self.touch(dir);
         self.index
             .apply_walk(&[dir.to_path_buf()], files, &seen, true);
     }
 
     fn process_events(&mut self, now: Instant) {
         let events = std::mem::take(&mut self.events);
-        let mut full = false;
+        // One entry per path, in path order so a directory comes before its
+        // contents: whether any event deleted it, and whether it exists
+        // after its last event.
+        let mut paths: BTreeMap<PathBuf, (bool, bool)> = BTreeMap::new();
         for e in events {
             let Some(path) = uri_to_path(&e.uri) else {
                 continue;
             };
+            let deleted = e.kind == p::FILE_DELETED;
+            let entry = paths.entry(path).or_insert((false, false));
+            entry.0 |= deleted;
+            entry.1 = !deleted;
+        }
+        let mut full = false;
+        let mut rewalked: Vec<PathBuf> = Vec::new();
+        for (path, (deleted, exists)) in paths {
+            // Drop events a walk would never reach before any stat, so
+            // `node_modules` and the like cost nothing.
+            if !self.walked.iter().any(|r| path.starts_with(r))
+                || self.admission.inside_pruned_dir(&path)
+                || rewalked.iter().any(|d| path.starts_with(d))
+            {
+                continue;
+            }
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            if matches!(name.as_str(), ".gitignore" | ".ignore" | ".rgignore") {
+            if self.admission.respects_ignore_files()
+                && matches!(name.as_str(), ".gitignore" | ".ignore" | ".rgignore")
+            {
                 self.admission.clear_ignore_cache();
                 full = true;
                 continue;
             }
-            if e.kind == p::FILE_DELETED {
+            if deleted {
+                self.touch(&path);
                 self.index.remove_disk_prefix(&path);
-            } else if self.fs.is_dir(&path) {
-                self.rewalk_dir(&path);
+            }
+            if !exists {
+                continue;
+            }
+            if self.fs.is_dir(&path) {
+                if !self.admission.prunes_dir(&path) {
+                    self.rewalk_dir(&path);
+                    rewalked.push(path);
+                }
             } else if self.admission.admits_disk(&path) {
                 self.rescan_disk_file(&path);
             } else {
+                self.touch(&path);
                 self.index.remove_disk(&path);
             }
         }
@@ -462,7 +547,7 @@ impl Server {
             scanning: self.scanning,
             interrupted: self.interrupted,
             needs_scan: self.needs_scan,
-            error: self.error.clone(),
+            error: self.error.clone().or_else(|| self.walk_error.clone()),
             warnings,
             status_bar: summary.status_bar,
             badge: summary.badge,
@@ -480,15 +565,21 @@ impl Server {
         let Some(doc) = self.docs.get(uri).cloned() else {
             return;
         };
-        let todos = self.scan_document(&doc);
-        if let Some(d) = self.docs.get_mut(uri) {
-            d.todos = todos.clone();
-        }
-        let ranges = if doc.admitted {
-            decorate(doc.text.as_bytes(), &todos, &self.settings, &self.pattern)
-        } else {
-            BTreeMap::new()
+        let computed = guarded(uri, "decoration", || {
+            let todos = self.scan_document(&doc);
+            let ranges = if doc.admitted {
+                decorate(doc.text.as_bytes(), &todos, &self.settings, &self.pattern)
+            } else {
+                BTreeMap::new()
+            };
+            (todos, ranges)
+        });
+        let Some((todos, ranges)) = computed else {
+            return;
         };
+        if let Some(d) = self.docs.get_mut(uri) {
+            d.todos = todos;
+        }
         let resolver = Resolver::new(&self.settings);
         let new_styles: BTreeMap<String, _> = ranges
             .keys()
@@ -733,13 +824,17 @@ impl Server {
                     return;
                 }
                 self.scanning = false;
+                let touched = std::mem::take(&mut self.touched);
                 match outcome {
                     Ok(o) => {
                         self.interrupted = o.cancelled;
+                        self.walk_error = None;
                         self.index
-                            .apply_walk(&roots, o.files, &o.seen, !o.cancelled);
+                            .apply_walk_except(&roots, o.files, &o.seen, !o.cancelled, |p| {
+                                p.ancestors().any(|a| touched.contains(a))
+                            });
                     }
-                    Err(e) => self.error = Some(e),
+                    Err(e) => self.walk_error = Some(e),
                 }
                 self.schedule_view(now, false);
                 self.send_status();
@@ -839,13 +934,21 @@ impl Server {
     }
 
     /// After a panic in a handler: the index may be half-updated, so drop it
-    /// and rebuild it with a full rescan.
+    /// and rebuild it with a full rescan. A document whose scan panics keeps
+    /// its previous todos, as in `rescan_buffer`.
     pub fn recover(&mut self, now: Instant) {
-        self.index = Index::new();
+        let old = std::mem::take(&mut self.index);
         for uri in self.docs.uris() {
-            self.rescan_buffer(&uri, now);
+            if !self.rescan_buffer(&uri, now) {
+                if let Some(entry) = old.buffer(&uri) {
+                    self.index.set_buffer(entry.clone());
+                }
+            }
         }
         self.full_rescan();
         self.schedule_view(now, true);
     }
 }
+
+#[cfg(test)]
+mod tests;
