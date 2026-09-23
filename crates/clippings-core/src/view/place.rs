@@ -2,6 +2,7 @@
 //! and tags-only views, and each node's ID.
 
 use super::{Arena, Kind, Node, TodoData};
+use crate::globs::slash_path;
 use crate::index::EffectiveFile;
 use crate::roots::deepest_root;
 use crate::settings::Settings;
@@ -129,7 +130,7 @@ pub fn place(settings: &Settings, files: &[EffectiveFile], tree_roots: &[PathBuf
                                 let d = dir.clone();
                                 parent = Some(a.get_or_add(
                                     parent,
-                                    &format!("d:{}", d.display()),
+                                    &format!("d:{}", slash_path(&d)),
                                     || {
                                         let mut n = Node::new(Kind::Folder, name_of(&d));
                                         n.path = Some(d.clone());
@@ -140,7 +141,7 @@ pub fn place(settings: &Settings, files: &[EffectiveFile], tree_roots: &[PathBuf
                         }
                     }
                     let file_key = match file.path {
-                        Some(p) => format!("f:{}", p.display()),
+                        Some(p) => format!("f:{}", slash_path(p)),
                         None => format!("f:{}", doc_uri.clone().unwrap_or_default()),
                     };
                     let file_idx = a.get_or_add(parent, &file_key, || {
