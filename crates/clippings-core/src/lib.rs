@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod fs;
 pub mod globs;
+pub mod ignore_rules;
 pub mod roots;
 
 pub use error::CoreError;
