@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = ["crates/clippings-core", "crates/clippings"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+clippings-core = { path = "crates/clippings-core" }
+anyhow = "1"
+clap = { version = "4.6", features = ["derive"] }
+dunce = "1.0"
+encoding_rs = "0.8.41"
+fancy-regex = "0.19"
+globset = "0.4.20"
+grep-matcher = "0.1.9"
+grep-regex = "0.1.14"
+grep-searcher = "0.1.17"
+ignore = "0.4.33"
+insta = { version = "1.48", features = ["json"] }
+memchr = "2.8"
+regex = "1.13"
+regex-syntax = "0.8.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tracing = "0.1"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "unwind"
+strip = "symbols"

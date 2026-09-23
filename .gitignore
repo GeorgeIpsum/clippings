@@ -1,0 +1,6 @@
+/target
+node_modules/
+*.vsix
+/extension/bin/
+/extension/dist/
+*.pending-snap
