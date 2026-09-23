@@ -8,9 +8,11 @@ pub mod extract;
 pub mod fs;
 pub mod globs;
 pub mod ignore_rules;
+pub mod model;
 pub mod pattern;
 pub mod position;
 pub mod roots;
+pub mod scanner;
 
 pub use error::CoreError;
 
