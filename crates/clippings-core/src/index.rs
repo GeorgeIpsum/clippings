@@ -76,7 +76,7 @@ impl Index {
     }
 
     /// Applies a walk: replaces entries for scanned files and, when the walk
-    /// completed, removes entries under `roots` that it did not see.
+    /// completed, removes entries under `roots` that it did not see. `seen` may be in any order.
     pub fn apply_walk(
         &mut self,
         roots: &[PathBuf],
@@ -91,8 +91,10 @@ impl Index {
             self.disk.insert(f.path, f.todos);
         }
         if complete {
+            let seen_set: std::collections::HashSet<&Path> =
+                seen.iter().map(PathBuf::as_path).collect();
             self.disk.retain(|p, _| {
-                !roots.iter().any(|r| p.starts_with(r)) || seen.binary_search(p).is_ok()
+                !roots.iter().any(|r| p.starts_with(r)) || seen_set.contains(p.as_path())
             });
         }
     }
@@ -368,5 +370,27 @@ mod tests {
             i.disk(Path::new("/r/d2/b.ts")).is_some(),
             "sibling with shared prefix string survives"
         );
+    }
+
+    #[test]
+    fn apply_walk_accepts_unsorted_seen() {
+        let mut i = Index::new();
+        let roots = vec![PathBuf::from("/r")];
+        let seen = vec![
+            PathBuf::from("/r/z.ts"),
+            PathBuf::from("/r/a.ts"),
+            PathBuf::from("/r/m.ts"),
+        ];
+        let files = seen
+            .iter()
+            .map(|p| FileResult {
+                path: p.clone(),
+                todos: vec![todo("x")],
+            })
+            .collect();
+        i.apply_walk(&roots, files, &seen, true);
+        for p in &seen {
+            assert!(i.disk(p).is_some(), "{} kept", p.display());
+        }
     }
 }
