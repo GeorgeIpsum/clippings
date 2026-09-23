@@ -21,6 +21,7 @@ pub mod scanner;
 pub mod settings;
 pub mod styles;
 pub mod uri;
+pub mod view;
 pub mod walker;
 
 pub use error::CoreError;
