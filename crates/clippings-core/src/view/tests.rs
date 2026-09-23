@@ -338,3 +338,75 @@ fn find_returns_paths_from_the_top() {
     assert_eq!(todos[0].last().unwrap().label, "FIXME later");
     assert!(v.find("file:///w/nope.ts", None).is_empty());
 }
+
+#[test]
+fn counts_includes_all_visible_todos_in_first_seen_order() {
+    let mut s = quiet();
+    s.tree.show_counts_in_tree = true;
+    s.highlights.custom_highlight.insert(
+        "BUG".into(),
+        Attributes {
+            hide_from_activity_bar: Some(true),
+            ..Default::default()
+        },
+    );
+    let v = sample().build(&s);
+    let all_counts = v.counts(&s, |a| a.hide_from_activity_bar, None);
+    assert_eq!(
+        all_counts,
+        vec![("FIXME".into(), 1), ("TODO".into(), 2)],
+        "counts per key in first-seen order, BUG excluded by hide_from_activity_bar"
+    );
+
+    let file_a = std::path::PathBuf::from("/w/src/a.ts");
+    let file_counts = v.counts(&s, |a| a.hide_from_activity_bar, Some(&file_a));
+    assert_eq!(file_counts, vec![], "BUG hidden, no other todos in a.ts");
+
+    let file_b = std::path::PathBuf::from("/w/src/b.ts");
+    let file_b_counts = v.counts(&s, |a| a.hide_from_activity_bar, Some(&file_b));
+    assert_eq!(
+        file_b_counts,
+        vec![("FIXME".into(), 1), ("TODO".into(), 1)],
+        "file filter includes only b.ts todos"
+    );
+}
+
+#[test]
+fn tag_grouping_wins_over_sub_tag_grouping() {
+    let mut t1 = todo(0, "TODO", "one");
+    t1.sub_tag = Some("alice".into());
+    let mut t2 = todo(1, "FIXME", "two");
+    t2.sub_tag = Some("bob".into());
+
+    // Multiple files prevent tag compaction (each tag has 2+ children: files + todos)
+    let fx = Fixture::new()
+        .file("/w/a.ts", vec![t1.clone()])
+        .file("/w/b.ts", vec![t2.clone()]);
+
+    // Tree view with both grouped: tag grouping wins (tags under root)
+    let mut s_both = quiet();
+    s_both.view_state.grouped_by_tag = Some(true);
+    s_both.view_state.grouped_by_sub_tag = Some(true);
+
+    let v = fx.build(&s_both);
+    let root_id = "w:file:///w";
+    let root_children = ids(&v, Some(root_id));
+    assert!(
+        root_children.iter().any(|id| id.contains("/g:")),
+        "tag levels present under root when tag grouping wins in tree view, got: {:?}",
+        root_children
+    );
+
+    // Tags-only view with both groupings: tag grouping wins
+    let mut s_tags_both = quiet();
+    s_tags_both.view_state.tags_only = Some(true);
+    s_tags_both.view_state.grouped_by_tag = Some(true);
+    s_tags_both.view_state.grouped_by_sub_tag = Some(true);
+
+    let v = fx.build(&s_tags_both);
+    let top = ids(&v, None);
+    assert!(
+        top.iter().any(|id| id.starts_with("g:")),
+        "tag grouping visible at top in tags-only when both set"
+    );
+}

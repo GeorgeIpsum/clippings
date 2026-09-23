@@ -315,6 +315,8 @@ impl View {
     ) -> Vec<(String, usize)> {
         let resolver = Resolver::new(settings);
         let mut counts: Vec<(String, usize)> = Vec::new();
+        let mut key_to_index: HashMap<String, usize> = HashMap::new();
+        let mut hidden_cache: HashMap<String, bool> = HashMap::new();
         for (i, n) in self.arena.nodes.iter().enumerate() {
             if n.kind != Kind::Todo || !self.shaped.visible[i] {
                 continue;
@@ -325,12 +327,19 @@ impl View {
                 }
             }
             let key = n.key.clone().unwrap_or_default();
-            if resolver.flag(&key, hide) {
+            let is_hidden = *hidden_cache
+                .entry(key.clone())
+                .or_insert_with(|| resolver.flag(&key, hide));
+            if is_hidden {
                 continue;
             }
-            match counts.iter_mut().find(|(k, _)| *k == key) {
-                Some((_, c)) => *c += 1,
-                None => counts.push((key, 1)),
+            match key_to_index.get(&key) {
+                Some(&idx) => counts[idx].1 += 1,
+                None => {
+                    let idx = counts.len();
+                    key_to_index.insert(key.clone(), idx);
+                    counts.push((key, 1));
+                }
             }
         }
         counts
