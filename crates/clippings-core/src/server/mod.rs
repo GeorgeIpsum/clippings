@@ -289,6 +289,14 @@ impl Server {
         }
     }
 
+    /// A full rescan that also refreshes every open document.
+    fn rescan_all(&mut self, now: Instant) {
+        for uri in self.docs.uris() {
+            self.rescan_buffer(&uri, now, true);
+        }
+        self.full_rescan();
+    }
+
     fn full_rescan(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
         self.cancel = Arc::new(AtomicBool::new(false));
@@ -356,9 +364,12 @@ impl Server {
         scan_text(&self.pattern, doc.text.as_bytes(), &path)
     }
 
-    /// Rescans an open buffer and, when auto-refresh is on, feeds the index.
-    /// Returns false when the scan panicked, leaving the previous state.
-    fn rescan_buffer(&mut self, uri: &str, now: Instant) -> bool {
+    /// Rescans an open buffer and feeds the index when auto-refresh is on or
+    /// `force` is set: explicit, periodic, git and overflow rescans refresh
+    /// open documents whatever `tree.autoRefresh` says, as todo-tree's
+    /// `rebuild` does. Returns false when the scan panicked, leaving the
+    /// previous state.
+    fn rescan_buffer(&mut self, uri: &str, now: Instant, force: bool) -> bool {
         let Some(doc) = self.docs.get(uri).cloned() else {
             return true;
         };
@@ -368,7 +379,7 @@ impl Server {
         if let Some(d) = self.docs.get_mut(uri) {
             d.todos = todos.clone();
         }
-        if doc.admitted && self.settings.tree.auto_refresh {
+        if doc.admitted && (force || self.settings.tree.auto_refresh) {
             self.index.set_buffer(BufferEntry {
                 uri: doc.uri.clone(),
                 path: doc.path.clone(),
@@ -632,9 +643,8 @@ impl Server {
                 if let Some(d) = self.docs.get_mut(&uri) {
                     d.admitted = admitted;
                 }
-                self.rescan_buffer(&uri, now);
             }
-            self.full_rescan();
+            self.rescan_all(now);
         }
         if changes.styles {
             self.style_generation += 1;
@@ -686,7 +696,7 @@ impl Server {
                     todos: Vec::new(),
                     admitted,
                 });
-                self.rescan_buffer(&uri, now);
+                self.rescan_buffer(&uri, now, false);
                 self.decorations_due.insert(uri, now);
             }
             method::DID_CHANGE => {
@@ -759,7 +769,7 @@ impl Server {
                     self.send_status();
                 }
             }
-            method::RESCAN => self.full_rescan(),
+            method::RESCAN => self.rescan_all(now),
             method::STOP_SCAN => self.cancel.store(true, Ordering::Relaxed),
             _ => {}
         }
@@ -859,7 +869,7 @@ impl Server {
                     let changed = self.git_heads.get(&folder).is_some_and(|old| *old != h);
                     self.git_heads.insert(folder, h);
                     if changed {
-                        self.full_rescan();
+                        self.rescan_all(now);
                     }
                 }
             }
@@ -869,10 +879,13 @@ impl Server {
                     self.events_due.get_or_insert(now + EVENT_DELAY);
                 }
             }
-            Work::Files(None) => {
+            // Like any file event, an overflow updates the tree only with
+            // auto-refresh on (spec 5.9).
+            Work::Files(None) if self.settings.tree.auto_refresh => {
                 tracing::warn!("file watcher failed; rescanning");
-                self.full_rescan();
+                self.rescan_all(now);
             }
+            Work::Files(None) => tracing::warn!("file watcher failed; auto-refresh is off"),
         }
     }
 
@@ -905,7 +918,7 @@ impl Server {
             .collect();
         for uri in due {
             self.buffer_due.remove(&uri);
-            self.rescan_buffer(&uri, now);
+            self.rescan_buffer(&uri, now, false);
         }
         let due: Vec<String> = self
             .decorations_due
@@ -918,7 +931,7 @@ impl Server {
             self.send_decorations(&uri);
         }
         if self.periodic_due.is_some_and(|d| d <= now) {
-            self.full_rescan();
+            self.rescan_all(now);
             self.periodic_due = Some(
                 now + Duration::from_secs(
                     self.settings.general.periodic_refresh_interval.max(1) * 60,
@@ -953,7 +966,7 @@ impl Server {
     pub fn recover(&mut self, now: Instant) {
         let old = std::mem::take(&mut self.index);
         for uri in self.docs.uris() {
-            if !self.rescan_buffer(&uri, now) {
+            if !self.rescan_buffer(&uri, now, true) {
                 if let Some(entry) = old.buffer(&uri) {
                     self.index.set_buffer(entry.clone());
                 }

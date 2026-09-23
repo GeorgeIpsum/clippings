@@ -507,3 +507,73 @@ fn a_changed_event_on_a_directory_does_not_rewalk_it() {
         Some(vec!["unseen".to_string()])
     );
 }
+
+fn open(s: &mut Server, uri: &str, text: &str, now: Instant) {
+    s.handle_notification(
+        notification(
+            method::DID_OPEN,
+            json!({ "textDocument": { "uri": uri, "languageId": "typescript", "version": 1, "text": text } }),
+        ),
+        now,
+    );
+}
+
+/// Paths from the top of the tree to the todos of `uri`.
+fn found(s: &mut Server, uri: &str) -> usize {
+    let r = s.handle_request(Request::new(
+        RequestId::from(1),
+        method::FIND.to_string(),
+        json!({ "uri": uri, "line": null }),
+    ));
+    r.response_result.unwrap()["paths"]
+        .as_array()
+        .unwrap()
+        .len()
+}
+
+#[test]
+fn without_auto_refresh_an_explicit_rescan_still_refreshes_open_documents() {
+    let (_t, root) = workspace();
+    let (mut s, _rx) = server(
+        &root,
+        json!({ "tree": { "autoRefresh": false, "scanMode": "open files" } }),
+        Arc::new(NativeFs),
+    );
+    let now = Instant::now();
+    let uri = file_uri(&root.join("open.ts"));
+    open(&mut s, &uri, "// TODO opened\n", now);
+    s.tick(now + VIEW_DELAY);
+    assert_eq!(found(&mut s, &uri), 0, "opening does not feed the tree");
+
+    s.handle_notification(notification(method::RESCAN, json!({})), now);
+    s.tick(now + VIEW_DELAY);
+    assert_eq!(
+        found(&mut s, &uri),
+        1,
+        "the rescan refreshed the open document"
+    );
+}
+
+#[test]
+fn without_auto_refresh_a_watcher_overflow_does_not_rescan() {
+    let (_t, root) = workspace();
+    let (mut s, _rx) = server(
+        &root,
+        json!({ "tree": { "autoRefresh": false } }),
+        Arc::new(NativeFs),
+    );
+    s.handle_work(Work::Files(None), Instant::now());
+    assert_eq!(s.scan_generation, 0);
+    assert!(!s.scanning);
+
+    // Control: with auto-refresh on, an overflow rescans the disk and the
+    // open documents.
+    let (mut s, _rx) = server(&root, json!({}), Arc::new(NativeFs));
+    let now = Instant::now();
+    let uri = file_uri(&root.join("open.ts"));
+    open(&mut s, &uri, "// TODO opened\n", now);
+    s.docs.get_mut(&uri).unwrap().text = "// TODO edited\n".into();
+    s.handle_work(Work::Files(None), now);
+    assert_eq!(s.scan_generation, 1);
+    assert_eq!(s.index.buffer(&uri).unwrap().todos[0].after, "edited");
+}

@@ -201,14 +201,14 @@ Disk events for a file whose buffers currently supply its effective result updat
 | `current file` | only a `rootFolder` scan root, if set | only the active editor's document |
 
 - In `current file` mode, when no text editor is active, no buffer feeds the tree, as in todo-tree where the tree is cleared.
-- When `tree.autoRefresh` is false, neither buffer changes nor file events update the tree. Only an explicit refresh, periodic refresh and git refresh do. Decorations still update.
+- When `tree.autoRefresh` is false, neither opening or editing a document, nor file events, nor a watcher overflow update the tree. Only an explicit refresh, periodic refresh and git refresh do, and each of them rescans every open document as well as the disk, as todo-tree's `rebuild` refreshes open files. Decorations still update.
 - When `tree.scanAtStartup` is false, the first walk waits for an explicit refresh, and `clippings/status` reports `needsScan` so the client can show a hint.
 
 ### 5.10 Scheduler
 
 One scheduler thread owns the index and view and applies all changes to them.
 
-- **File events** come from `workspace/didChangeWatchedFiles`. The server registers one `**/*` watcher per walked root with dynamic registration, so VS Code's own recursive watcher does the watching, and re-registers when the walked roots change. If the client does not support dynamic registration, the server falls back to a `notify` watcher, which is also what `clippings watch` uses. This is rust-analyzer's loader design (survey §5 item 3). A watcher overflow is treated as a watcher failure, which triggers a full rescan; `notify` itself reports an overflow as an event flagged for rescan.
+- **File events** come from `workspace/didChangeWatchedFiles`. The server registers one `**/*` watcher per walked root with dynamic registration, so VS Code's own recursive watcher does the watching, and re-registers when the walked roots change. If the client does not support dynamic registration, the server falls back to a `notify` watcher, which is also what `clippings watch` uses. This is rust-analyzer's loader design (survey §5 item 3). A watcher overflow is treated as a watcher failure, which triggers a full rescan of the disk and every open document when `tree.autoRefresh` is true; `notify` itself reports an overflow as an event flagged for rescan.
 - File events are coalesced for 50 ms and filtered by the admission predicate. A Created or Changed event is statted: a file is rescanned. A directory is rewalked only for a Created event; a Changed event on a directory does nothing, because changes below it arrive as their own events. A Deleted event removes the entry for that path and every entry whose path begins with that path followed by `/`, because VS Code reports a deleted folder as one event.
 - An event for a path inside a directory the walker would prune is dropped before any stat: this covers the built-in never-index list, user and VS Code exclude globs, hidden and ignore-file rules, and submodules. An event for such a directory itself costs one directory check. A rewalk of a created directory prunes with the same rules, though it does not reload ignore-file rules on its own. Ignore-file events (`.gitignore`, `.ignore`, `.rgignore`) clear the ignore cache and start a full rescan, but only when ignore files are respected and the file is not inside a pruned directory. Events within one batch are deduplicated per path.
 - Buffer edits arrive through incremental document sync. A document's buffer is rescanned for the tree after 150 ms without edits. Its decorations are recomputed after `highlights.highlightDelay` milliseconds without edits.
@@ -567,7 +567,7 @@ Plus one universal VSIX without a binary or `platform.ok`, which works only when
 - Panics follow the rules in section 5.10.
 - An unreadable file is logged at debug level and skipped. The scan continues.
 - A regex that fails under both engines puts the server in an error state. The last good index and view stay in place, `clippings/status` carries the error, and the client shows one warning with an Open Settings action.
-- If the watcher reports an overflow or error, the server runs a full rescan and warns once.
+- If the watcher reports an overflow or error, the server runs a full rescan and warns once, unless `tree.autoRefresh` is false (section 5.9).
 
 ### 10.2 Client
 
