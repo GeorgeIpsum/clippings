@@ -465,10 +465,10 @@ impl Server {
             // `node_modules` and the like cost nothing.
             if !self.walked.iter().any(|r| path.starts_with(r))
                 || self.admission.inside_pruned_dir(&path)
-                || rewalked.iter().any(|d| path.starts_with(d))
             {
                 continue;
             }
+            // Before the rewalk skip: a rewalk does not reload ignore rules.
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -478,6 +478,9 @@ impl Server {
             {
                 self.admission.clear_ignore_cache();
                 full = true;
+                continue;
+            }
+            if rewalked.iter().any(|d| path.starts_with(d)) {
                 continue;
             }
             if deleted {
@@ -829,10 +832,18 @@ impl Server {
                     Ok(o) => {
                         self.interrupted = o.cancelled;
                         self.walk_error = None;
-                        self.index
-                            .apply_walk_except(&roots, o.files, &o.seen, !o.cancelled, |p| {
-                                p.ancestors().any(|a| touched.contains(a))
-                            });
+                        if touched.is_empty() {
+                            self.index
+                                .apply_walk(&roots, o.files, &o.seen, !o.cancelled);
+                        } else {
+                            self.index.apply_walk_except(
+                                &roots,
+                                o.files,
+                                &o.seen,
+                                !o.cancelled,
+                                |p| p.ancestors().any(|a| touched.contains(a)),
+                            );
+                        }
                     }
                     Err(e) => self.walk_error = Some(e),
                 }

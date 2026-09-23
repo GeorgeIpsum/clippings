@@ -446,3 +446,33 @@ fn a_batch_handles_each_path_once_and_skips_files_under_rewalked_dirs() {
     );
     assert_eq!(afters(&s, &root.join("gone.ts")), None);
 }
+
+#[test]
+fn an_ignore_file_under_a_rewalked_dir_still_rescans() {
+    let (_t, root) = workspace();
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    write(&root.join("lib/x.ts"), "// TODO x\n");
+    let (mut s, _rx) = server(&root, json!({}), Arc::new(NativeFs));
+    assert!(
+        s.admission.admits_disk(&root.join("lib/x.ts")),
+        "rules cached"
+    );
+    write(&root.join("lib/.gitignore"), "x.ts\n");
+    assert!(
+        s.admission.admits_disk(&root.join("lib/x.ts")),
+        "still cached"
+    );
+    events(
+        &mut s,
+        &[
+            (&root.join("lib"), p::FILE_CREATED),
+            (&root.join("lib/.gitignore"), p::FILE_CREATED),
+        ],
+    );
+    assert!(
+        !s.admission.admits_disk(&root.join("lib/x.ts")),
+        "ignore cache cleared"
+    );
+    assert_eq!(s.scan_generation, 1, "full rescan started");
+    assert!(s.scanning);
+}
