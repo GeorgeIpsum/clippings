@@ -159,6 +159,37 @@ def clippings_scan_count(binary: Path, config: Path, root: Path) -> tuple[int, i
     return todos, len(data["files"])
 
 
+def dirty_paths(root: Path) -> set[Path]:
+    """Files with uncommitted changes."""
+    r = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+    )
+    return {
+        (root / line[3:].split(" -> ")[-1]).resolve()
+        for line in r.stdout.splitlines()
+        if len(line) > 3
+    }
+
+
+def restore(originals: dict[Path, bytes], written: dict[Path, bytes]) -> None:
+    """Puts back each churned file, but only while it still holds exactly
+    what this script wrote, so a concurrent edit is never overwritten."""
+    for path, data in originals.items():
+        try:
+            current = path.read_bytes()
+        except OSError:
+            log(f"WARNING: {path} vanished; not restoring")
+            continue
+        if current == data:
+            continue
+        if current == written.get(path):
+            path.write_bytes(data)
+        else:
+            log(f"WARNING: {path} changed by someone else; left as is")
+
+
 def pick_churn_files(files: list[Path], n: int) -> list[Path]:
     picked = []
     for p in files:
@@ -216,7 +247,11 @@ def main() -> int:
     log(f"clippings scan todo count: {scan_todos} todos in {scan_files} files")
 
     all_files = rg_files(tillix)
-    churn_files = pick_churn_files(all_files, CHURN_FILES)
+    # Never churn a file with uncommitted changes: someone may be editing it.
+    dirty = dirty_paths(tillix)
+    churn_files = pick_churn_files(
+        [p for p in all_files if p.resolve() not in dirty], CHURN_FILES
+    )
     log(f"churn files: {len(churn_files)} picked")
 
     summary: dict = {
@@ -225,6 +260,7 @@ def main() -> int:
         "scan_files": scan_files,
     }
     originals: dict[Path, bytes] = {}
+    written: dict[Path, bytes] = {}
     error: Optional[str] = None
 
     proc = subprocess.Popen(
@@ -301,6 +337,7 @@ def main() -> int:
                 addition += b"\n"
             addition += f"// TODO churn {i}\n".encode()
             path.write_bytes(addition)
+            written[path] = addition
         client.send(
             {
                 "jsonrpc": "2.0",
@@ -314,8 +351,7 @@ def main() -> int:
         log(f"churn up (+{CHURN_FILES}) after {churn_up_ms:.0f} ms")
         summary["churn_up_ms"] = churn_up_ms
 
-        for path, data in originals.items():
-            path.write_bytes(data)
+        restore(originals, written)
         client.send(
             {
                 "jsonrpc": "2.0",
@@ -397,9 +433,7 @@ def main() -> int:
     finally:
         # Belt and suspenders: restore anything still modified, whatever
         # went wrong and wherever it happened.
-        for path, data in originals.items():
-            if path.exists() and path.read_bytes() != data:
-                path.write_bytes(data)
+        restore(originals, written)
         if proc.poll() is None:
             proc.kill()
             try:
