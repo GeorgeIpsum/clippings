@@ -3,6 +3,7 @@
 pub mod config;
 pub mod error;
 pub mod fs;
+pub mod globs;
 
 pub use error::CoreError;
 
