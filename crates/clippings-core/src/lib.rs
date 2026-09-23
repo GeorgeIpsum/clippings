@@ -22,6 +22,7 @@ pub mod protocol;
 pub mod report;
 pub mod roots;
 pub mod scanner;
+pub mod server;
 pub mod settings;
 pub mod status;
 pub mod styles;
