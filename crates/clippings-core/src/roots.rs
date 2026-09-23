@@ -70,10 +70,9 @@ pub fn resolve_roots(
     }
     let expanded = expand_env(root_folder, env);
     let scan_roots: Vec<PathBuf> = if expanded.contains("${workspaceFolder}") {
-        workspace_folders
+        tree_roots
             .iter()
             .map(|f| PathBuf::from(expanded.replace("${workspaceFolder}", &f.to_string_lossy())))
-            .filter(|p| allowed(p))
             .collect()
     } else {
         vec![PathBuf::from(expanded)]
@@ -177,6 +176,19 @@ mod tests {
             walked_roots(&rf, ScanMode::CurrentFile),
             vec![PathBuf::from("/elsewhere")]
         );
+    }
+
+    #[test]
+    fn excluded_workspace_is_not_walked_through_root_folder() {
+        let folders = vec![PathBuf::from("/w/a"), PathBuf::from("/w/skip")];
+        let cfg = CoreConfig {
+            root_folder: "${workspaceFolder}/src".into(),
+            excluded_workspaces: vec!["**/skip".into()],
+            ..Default::default()
+        };
+        let r = resolve_roots(&folders, &cfg, &no_env).unwrap();
+        assert_eq!(r.tree_roots, vec![PathBuf::from("/w/a")]);
+        assert_eq!(r.scan_roots, vec![PathBuf::from("/w/a/src")]);
     }
 
     #[test]
