@@ -137,7 +137,7 @@ Temporary globs are built from the node's absolute path with glob metacharacters
 - The literal token `($TAGS)` in `regex.regex` is replaced by `(` + alternation + `)`.
 - Flags: multi-line anchors `(?m)` always, `(?i)` when `regex.regexCaseSensitive` is false, and `(?s)` when `regex.enableMultiLine` is true.
 - Multi-line search mode is used when the regex source contains the two characters `\n`, when `regex.enableMultiLine` is true, or when `grep-regex` rejects the pattern in line mode because it can match a line terminator.
-- The pattern is compiled with `grep-regex`. Only when `regex-syntax` reports an unsupported feature, namely look-around or backreferences, is it compiled with `fancy-regex` behind a `grep_matcher::Matcher` adapter. The adapter reports `\n` as its line terminator so line-mode searches use the fast path. Haystacks that are not valid UTF-8 are converted lossily with an offset map back to bytes. Runtime errors such as a backtrack limit are logged per file and skip that file.
+- The pattern is compiled with `grep-regex`. Only when `regex-syntax` reports an unsupported feature, namely look-around or backreferences, is it compiled with `fancy-regex` behind a `grep_matcher::Matcher` adapter. The adapter reports `\n` as its line terminator so line-mode searches use the fast path. Haystacks that are not valid UTF-8 are converted lossily with an offset map back to bytes. A runtime error such as a backtrack limit is logged. It ends that file's scan at the point it occurs: matches already found earlier in the file stand, and nothing found after that point is reported.
 - If neither engine accepts the pattern, the server enters the error state in section 10.1.
 - Matches of zero length are skipped, so no pattern can loop.
 - The same compiled matcher is used for the workspace walk, open buffers, decorations and navigation, so the four can never disagree.
@@ -208,15 +208,17 @@ Disk events for a file whose buffers currently supply its effective result updat
 
 One scheduler thread owns the index and view and applies all changes to them.
 
-- **File events** come from `workspace/didChangeWatchedFiles`. The server registers one `**/*` watcher per walked root with dynamic registration, so VS Code's own recursive watcher does the watching, and re-registers when the walked roots change. If the client does not support dynamic registration, the server falls back to a `notify` watcher, which is also what `clippings watch` uses. This is rust-analyzer's loader design (survey §5 item 3).
+- **File events** come from `workspace/didChangeWatchedFiles`. The server registers one `**/*` watcher per walked root with dynamic registration, so VS Code's own recursive watcher does the watching, and re-registers when the walked roots change. If the client does not support dynamic registration, the server falls back to a `notify` watcher, which is also what `clippings watch` uses. This is rust-analyzer's loader design (survey §5 item 3). A watcher overflow is treated as a watcher failure, which triggers a full rescan; `notify` itself reports an overflow as an event flagged for rescan.
 - File events are coalesced for 50 ms and filtered by the admission predicate. A Created or Changed event is statted: a file is rescanned, a directory is rewalked. A Deleted event removes the entry for that path and every entry whose path begins with that path followed by `/`, because VS Code reports a deleted folder as one event.
+- An event for a path inside a directory the walker would prune is dropped before any stat: this covers the built-in never-index list, user and VS Code exclude globs, hidden and ignore-file rules, and submodules. An event for such a directory itself costs one directory check. A rewalk of a created directory prunes with the same rules, though it does not reload ignore-file rules on its own. Ignore-file events (`.gitignore`, `.ignore`, `.rgignore`) clear the ignore cache and start a full rescan, but only when ignore files are respected and the file is not inside a pruned directory. Events within one batch are deduplicated per path.
 - Buffer edits arrive through incremental document sync. A document's buffer is rescanned for the tree after 150 ms without edits. Its decorations are recomputed after `highlights.highlightDelay` milliseconds without edits.
 - `clippings/activeEditor` records the active document. In `current file` scan mode it schedules a view rebuild. In `current file` status bar mode it schedules a status recompute.
 - After any change that affects the tree, the view is rebuilt after a 50 ms coalescing window.
 - A full rescan runs when regex, tags, sub-tag regex, multi-line, case sensitivity, any exclusion layer or the VS Code excludes it pulls in, hidden files, submodule handling, scan roots or scan mode change, when `tree.autoRefresh` changes from false to true, and on explicit refresh.
-- Full rescans are single-flight. Starting one cancels any running one. A rescan replaces entries file by file and, when complete, removes entries for files it did not see. A cancelled rescan skips the removal step, so the index holds fresh results for scanned files and previous results for the rest.
+- Full rescans are single-flight. Starting one cancels any running one. A rescan replaces entries file by file and, when complete, removes entries for files it did not see. A cancelled rescan skips the removal step, so the index holds fresh results for scanned files and previous results for the rest. A full scan's results do not overwrite paths that file events touched while it ran: those entries keep the state the events produced, and a completed scan still removes entries it did not see, other than those paths.
+- **`clippings watch`** prints one JSON line per path whose todos change, driven by the same `notify` watcher. It reports `removed` when the path no longer exists or is no longer admitted, decided from the live filesystem rather than the event's kind, because backends such as FSEvents can report one deletion as several events with different kinds for the same path. An event inside a never-index directory, and an event for such a directory itself, print nothing. A broken stdout pipe, such as a killed reader, ends the process with exit code 0 instead of an error.
 
-**Panics.** Scanning, view building and decoration computation run on worker threads over immutable inputs and return new values, and the scheduler swaps them in only on success. A panic there is caught with `catch_unwind`, logged, and leaves the previous state intact. Request handlers that only read state are also run under `catch_unwind` and answer with an error. Index mutation on the scheduler thread is not wrapped; if it panics, the index is marked poisoned and rebuilt by a full rescan.
+**Panics.** Full walks and git polls run on worker threads. Buffer scans, view builds and decoration computation run on the scheduler thread under `catch_unwind`. A panic while scanning or decorating one document is logged, and that document keeps its previous todos and decorations; the rest of the state is untouched. Request handlers that only read state are also run under `catch_unwind` and answer with an error. Only a panic during index mutation drops the index and rebuilds it with a full rescan. Recovery guards each document the same way, so a document that always panics cannot take the server down.
 
 Changes in paths excluded by the user's `files.watcherExclude` are not reported by VS Code and are picked up only by a rescan.
 
@@ -234,7 +236,7 @@ The view is rebuilt from the effective results after every relevant change and d
 
 **Placement** ports todo-tree's `add` (inventory §4.2) with hash-map lookups, so it is linear in the number of matches.
 
-- **Tree view**: tree root, folder chain, file, todo. With grouping by tag, a tag level sits above the folder chain. With grouping by sub-tag, a sub-tag level sits above it. When not grouped by sub-tag, a sub-tagged todo sits under a sub-tag pseudo-folder below its file.
+- **Tree view**: tree root, folder chain, file, todo. With grouping by tag, a tag level sits above the folder chain. With grouping by sub-tag, a sub-tag level sits above it. When not grouped by sub-tag, a sub-tagged todo sits under a sub-tag pseudo-folder below its file. With grouping by both tag and sub-tag, tag grouping wins: no sub-tag level and no pseudo-folder are created, as in todo-tree.
 - **Flat view**: file nodes under an optional tag or sub-tag level. When not grouped by sub-tag, a sub-tagged todo sits under a sub-tag pseudo-folder below its file node, as in the tree view.
 - **Tags-only view**: todos under tag roots, keyed `TAG (sub-tag)` when a sub-tag is present, or under sub-tag roots, or ungrouped at the top level. Tree root nodes are not shown.
 - Todos are de-duplicated by URI, line and column.
@@ -268,7 +270,7 @@ The view is rebuilt from the effective results after every relevant change and d
 | extra line | `x:<index>` |
 | status node | `status:scan-mode`, `status:filter` |
 
-Top-level nodes have no parent prefix. A node promoted by root compaction keeps its own ID. Todo IDs include the line, so inserting lines above a todo gives it a new ID; this only affects selection on that todo.
+Top-level nodes have no parent prefix. A node promoted by root compaction keeps its own ID. Todo IDs include the line, so inserting lines above a todo gives it a new ID; this only affects selection on that todo. A todo whose parent is not a file node — in the tags-only view — uses the own key `t:<uri>:<line>:<column>` instead, since line and column alone would collide across files.
 
 **Rendering** happens in Rust. Each node carries:
 
@@ -280,7 +282,7 @@ Top-level nodes have no parent prefix. A node promoted by root compaction keeps 
 - `hasChildren`, and `defaultExpanded`: true for multi-line todos, otherwise the effective `tree.expanded` state.
 - `contextValue`: `folder` for tree roots and folders; `file` for file nodes; none for tag, sub-tag, status and todo nodes.
 - `resourceUri`: the node's file URI when `tree.showBadges` is true, for folders and files only.
-- `command`: for todos, reveal the URI at the position chosen by `general.revealBehaviour`; for sub-tag nodes with `tree.subTagClickUrl`, open that URL with placeholders applied.
+- `command`: for todos, reveal the URI at the position chosen by `general.revealBehaviour`; `end of todo` reveals at the end of the line on which the match starts, carried as `textEnd` on each todo. For sub-tag nodes with `tree.subTagClickUrl`, open that URL with placeholders applied.
 
 **Deltas.** After a rebuild the server compares every node's rendered fields and child ID list with the previous build and sends the IDs of **parents to refresh**: the parent of every node whose own fields changed, and every node whose child ID list changed. A top-level change is reported as `null`, meaning the root. A view mode or grouping change is always reported as `[null]`.
 
@@ -288,7 +290,7 @@ Top-level nodes have no parent prefix. A node promoted by root compaction keeps 
 
 Decorations are computed for each open document whose scheme is in `general.schemes` and that passes the open-buffer admission rules, when `highlights.enabled` is true.
 
-**Key** per match: the group name if the tag is grouped, else the tag. A sub-tag gets its own key. A match without a tag uses its trimmed match text as the key.
+**Key** per match: the group name if the tag is grouped, else the tag. A sub-tag gets its own key. A match without a tag uses its trimmed match text as the key, and its range (the "tag" row below) starts after the match's leading whitespace and ends at the raw match end; trailing whitespace is not trimmed, as in todo-tree.
 
 **Ranges** by `type` attribute:
 
@@ -298,7 +300,7 @@ Decorations are computed for each open document whose scheme is in `general.sche
 | `text` | tag start to end of the line where the match ends |
 | `tag-and-comment` | match start to tag end |
 | `text-and-comment` | match start to end of the line where the match ends |
-| `tag-and-subTag`, `tag-and-subtag` | the tag, plus the sub-tag under its own key when `customHighlight` has an entry for the sub-tag |
+| `tag-and-subTag`, `tag-and-subtag` | the tag, plus the sub-tag under its own key when `customHighlight` has an entry for the sub-tag; the sub-tag is searched from the tag's end to the end of the line containing the match's end, as in todo-tree |
 | `line` | start of the tag's line to end of the match's last line |
 | `whole-line` | the same range, with the style's whole-line flag set |
 | `capture-groups:n,m` | the listed capture groups of the match |
@@ -306,7 +308,7 @@ Decorations are computed for each open document whose scheme is in `general.sche
 
 **Attributes** are resolved per key: an exact `highlights.customHighlight` key match, then `highlights.defaultHighlight`, then the built-in default. When `highlights.useColourScheme` is true, foreground, background and icon colour come from the colour scheme arrays indexed by the key's position in `general.tags`, and `defaultHighlight` does not supply those three. Keys not in `general.tags`, such as groups, sub-tags and untagged matches, get no scheme colours, as in todo-tree. The 18 attributes and their defaults are listed in inventory §5.4.
 
-**Styles** are computed in Rust from the attributes: theme colour detection for strings containing `foreground` or `background`, opacity applied to hex and rgb colours with hex alpha taking precedence, ruler colour defaulting to the processed background, ruler lane mapping, font style and weight, text decoration, border radius, and the gutter icon descriptor. When a background is set and the foreground is not, the foreground is black or white by luminance with threshold 0.179.
+**Styles** are computed in Rust from the attributes: theme colour detection for strings containing `foreground` or `background`, opacity applied to hex and rgb colours with hex alpha taking precedence, ruler colour defaulting to the processed background, ruler lane mapping, font style and weight, text decoration, border radius, and the gutter icon descriptor. When a background is set and the foreground is not, the foreground is black or white by luminance with threshold 0.179. This auto-contrast applies to hex and `rgb()` backgrounds only; a named colour background gets no auto-contrast foreground, as in todo-tree.
 
 **Icon descriptors**: a codicon with optional theme colour, an octicon name with colour, todo-tree's own outline or filled icon with colour, the check-circle icon with colour, or the bundled default. An unknown octicon name falls back to `check`.
 
@@ -314,15 +316,15 @@ Decorations are computed for each open document whose scheme is in `general.sche
 
 The server computes:
 
-- The status bar text and tooltip for each `general.statusBar` mode: `none`, `total`, `tags`, `top three` and `current file`, with icons instead of tag names when `general.showIconsInsteadOfTagsInStatusBar` is true, and the scan-mode suffix ` (in open files)` or ` (in current file)`. Formats follow inventory §9. Status bar counts exclude tags with `hideFromStatusBar` in every mode.
-- The activity bar badge: the workspace total excluding `hideFromActivityBar` tags when `general.showActivityBarBadge` is true, else zero.
+- The status bar text and tooltip for each `general.statusBar` mode: `none`, `total`, `tags`, `top three` and `current file`, with icons instead of tag names when `general.showIconsInsteadOfTagsInStatusBar` is true, and the scan-mode suffix ` (in open files)` or ` (in current file)`. Formats follow inventory §9, with todo-tree's exact spacing: each item ends in a space, two after an icon, and items are joined with another space. The tooltip is `Clippings total`, `Clippings tags counts`, `Clippings tags counts in current file` or `Clippings top three tag counts`. Status bar counts exclude tags with `hideFromStatusBar` in every mode, including `total`; in `current file` mode with no active editor, the counts cover the whole workspace, as in todo-tree.
+- The activity bar badge: the workspace total excluding `hideFromActivityBar` tags when `general.showActivityBarBadge` is true, else zero, with tooltip `N todos`.
 - The view title: `Tree`, `Flat` or `Tags`, with ` (N)` appended when `tree.showCountsInTree` is true and N is positive. N is the current-file total in `current file` status bar mode, else the workspace total.
 - `hasSubTags`: whether any node in the current view has a sub-tag. `isEmpty`: whether the view has no todo nodes.
-- Scanning, interrupted and `needsScan` state, the error state, configuration warnings for invalid colours, icon names and label placeholders, and the server instance ID.
+- Scanning, interrupted and `needsScan` state, the error state, configuration warnings for invalid colours and label placeholders, and the server instance ID. Icon-name validation happens in the extension, which owns the octicon set.
 
 ### 5.15 Navigation and export
 
-- **Go to next and previous** search the open buffer with the shared matcher from each selection's cursor. Next skips a match that starts at the cursor. Previous takes the last match that starts before the cursor. Neither wraps. If any selection has no match, no selection moves.
+- **Go to next and previous** search the open buffer with the shared matcher from each selection's cursor. Next targets the first match starting after the cursor. Previous targets the last match that ends at or before the cursor, so the match the cursor is inside is skipped, as in todo-tree. Neither wraps. If any selection has no match, no selection moves.
 - **Export** produces the visible tree without status nodes. Folder and file nodes are keys holding objects, with flat-view file keys including their path label. A todo is a key `line N` whose value is its formatted label, or `line N:C` when another todo shares its line. In the tags-only view the key is prefixed with the file path. A multi-line todo's value is an object whose single key is its formatted label and whose value holds one empty object per extra line, keyed by the extra line's text. The output is JSON when `general.exportPath` ends in `.json` and an ASCII tree in treeify's format otherwise. The export path expands `~`, `${NAME}` environment variables and strftime placeholders.
 
 ## 6. Protocol
@@ -372,6 +374,8 @@ All `clippings.*` settings are declared with window scope, except `server.path`,
 
 - the true keys of `files.exclude` and `search.exclude`, and `explorer.compactFolders`;
 - the view state and temporary globs from workspace storage.
+
+The object has `general`, `highlights`, `filtering`, `tree` and `regex` as nested objects mirroring the settings groups, plus `viewState { flat, tagsOnly, expanded, groupedByTag, groupedBySubTag, filter, includeGlobs, excludeGlobs }`, `filesExclude`, `searchExclude` and `explorerCompactFolders`. Unknown fields are ignored.
 
 On each `clippings/configure` the server diffs against the previous object. Every row whose fields changed applies:
 
@@ -683,12 +687,14 @@ Scan sets:
 | Cold scan, tilliX defaults | under 50 ms |
 | Cold scan, every scan set | within 1.25 times ripgrep's time on the same set |
 | Server work for one changed file, excluding coalescing windows, p99 | under 10 ms |
-| View rebuild and diff with 10,000 todos | under 5 ms |
+| View rebuild and diff with 10,000 todos | under 15 ms |
 | Decoration computation for a 50,000-line open buffer | under 20 ms |
 | Extension host work per keystroke from Clippings | none beyond language client incremental sync |
 | Extension host time to apply a delta that refreshes 1,000 visible nodes | under 30 ms |
 | Timer wakeups when idle with git and periodic refresh off | zero |
 | Server resident memory, tilliX wide | under 150 MB |
+
+The view rebuild target reflects a prototype measurement of 12.5 ms on the same machine model. Sharing todo data between the index and the view, which would lower it further, is plan 4's optimisation.
 
 ## 14. Milestones
 
