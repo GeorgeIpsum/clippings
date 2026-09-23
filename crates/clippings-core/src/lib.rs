@@ -4,6 +4,7 @@ pub mod admission;
 pub mod comments;
 pub mod config;
 pub mod error;
+pub mod extract;
 pub mod fs;
 pub mod globs;
 pub mod ignore_rules;
