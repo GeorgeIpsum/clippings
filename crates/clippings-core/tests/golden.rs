@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 fn fixture() -> (tempfile::TempDir, PathBuf) {
     let t = tempfile::tempdir().unwrap();
-    let root = dunce::canonicalize(t.path()).unwrap();
+    let root = dunce::canonicalize(t.path()).unwrap().join("ws");
+    std::fs::create_dir(&root).unwrap();
     support::build_fixture(&root);
     (t, root)
 }
@@ -39,6 +40,7 @@ fn sub_tag_and_multi_line_scan_matches_golden() {
 #[test]
 fn walk_and_admission_agree_on_every_file() {
     let (_t, root) = fixture();
+    let mut mismatches = Vec::new();
     for cfg in [
         CoreConfig::default(),
         CoreConfig {
@@ -52,6 +54,10 @@ fn walk_and_admission_agree_on_every_file() {
         CoreConfig {
             built_in_excludes: vec![],
             include_hidden_files: true,
+            ..Default::default()
+        },
+        CoreConfig {
+            respect_ignore_files: false,
             ..Default::default()
         },
     ] {
@@ -70,17 +76,15 @@ fn walk_and_admission_agree_on_every_file() {
             let binary = entry.extension().is_some_and(|e| e == "bin" || e == "dat");
             let admitted = admission.admits_disk(&entry);
             let walked = walk.seen.binary_search(&entry).is_ok();
-            if !binary {
-                assert_eq!(
-                    admitted,
-                    walked,
-                    "{} under {:?}",
-                    entry.display(),
-                    cfg.built_in_excludes.len()
-                );
+            if !binary && admitted != walked {
+                mismatches.push(format!(
+                    "{}: admitted={admitted} walked={walked} under {cfg:?}",
+                    entry.strip_prefix(&root).unwrap().display()
+                ));
             }
         }
     }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
 fn walkdir(root: &std::path::Path) -> Vec<PathBuf> {

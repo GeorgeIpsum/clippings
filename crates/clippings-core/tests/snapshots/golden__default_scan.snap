@@ -5,6 +5,34 @@ expression: report
 {
   "files": [
     {
+      "path": ".whitelisted/notes.md",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 0,
+            "character": 5
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 2
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 5
+          },
+          "tag": "[ ]",
+          "subTag": null,
+          "before": "",
+          "after": "whitelisted hidden directory",
+          "extraLines": []
+        }
+      ]
+    },
+    {
       "path": "app/[slug]/page.tsx",
       "todos": [
         {
@@ -390,6 +418,90 @@ expression: report
           "subTag": null,
           "before": "const é = 'ééé';",
           "after": "after non-ascii",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "stray.txt",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 0,
+            "character": 7
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 3
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 7
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "",
+          "after": "above-repo gitignore does not apply",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "sub/keep.txt",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 0,
+            "character": 7
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 3
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 7
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "",
+          "after": "whitelisted by .ignore",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "vendor/nested/debug.log",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 0,
+            "character": 4
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 0
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 4
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "",
+          "after": "log in nested repo",
           "extraLines": []
         }
       ]

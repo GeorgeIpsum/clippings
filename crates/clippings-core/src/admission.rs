@@ -8,6 +8,7 @@ use crate::globs::{BuiltInExcludes, GlobLayers};
 use crate::ignore_rules::IgnoreRules;
 use crate::roots::deepest_root;
 use crate::CoreError;
+use ignore::Match;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -79,9 +80,6 @@ impl Admission {
             return false;
         }
         let rel_refs: Vec<&str> = rel.iter().map(String::as_str).collect();
-        if !self.include_hidden && rel_refs.iter().any(|c| c.starts_with('.')) {
-            return false;
-        }
         if self.built_in.file_excluded(&rel_refs) {
             return false;
         }
@@ -100,7 +98,22 @@ impl Admission {
                 dir = d.parent();
             }
         }
-        !(self.respect_ignore_files && self.ignore.is_ignored(path, false))
+        // Ignore files and hidden names, entry by entry from the root down,
+        // as the walker prunes. An ignore-file match, even a whitelist, takes
+        // precedence over the hidden rule, as in the walker.
+        let mut entry = root.to_path_buf();
+        for (i, c) in rel_refs.iter().enumerate() {
+            entry.push(c);
+            let m = if self.respect_ignore_files {
+                self.ignore.matched(root, &entry, i + 1 < rel_refs.len())
+            } else {
+                Match::None
+            };
+            if m.is_ignore() || (m.is_none() && !self.include_hidden && c.starts_with('.')) {
+                return false;
+            }
+        }
+        true
     }
 
     /// Whether an open buffer may feed the tree and get decorations. `path`
@@ -145,6 +158,18 @@ mod tests {
         );
         let hidden_ok = admission(r, |c| c.include_hidden_files = true);
         assert!(hidden_ok.admits_disk(&r.join(".github/ci.yml")));
+    }
+
+    #[test]
+    fn ignore_file_whitelist_beats_the_hidden_rule() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        fs::write(r.join(".ignore"), "!.config\n").unwrap();
+        let a = admission(r, |_| {});
+        assert!(a.admits_disk(&r.join(".config/a.toml")), "whitelisted");
+        assert!(!a.admits_disk(&r.join(".other/a.toml")), "hidden");
+        let no_rules = admission(r, |c| c.respect_ignore_files = false);
+        assert!(!no_rules.admits_disk(&r.join(".config/a.toml")));
     }
 
     #[test]

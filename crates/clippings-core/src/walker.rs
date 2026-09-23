@@ -80,9 +80,10 @@ pub fn walk_and_scan(
     }
     builder
         .hidden(!cfg.include_hidden_files)
-        .add_custom_ignore_filename(".rgignore")
         .threads(std::thread::available_parallelism().map_or(4, |n| n.get()));
-    if !cfg.respect_ignore_files {
+    if cfg.respect_ignore_files {
+        builder.add_custom_ignore_filename(".rgignore");
+    } else {
         builder
             .ignore(false)
             .git_ignore(false)

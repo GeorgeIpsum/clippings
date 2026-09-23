@@ -1,4 +1,7 @@
 //! Builds the fixture workspace from spec section 12.2 in a temporary directory.
+//!
+//! `root` must be a subdirectory of a scratch directory: the fixture also
+//! writes a stray `.gitignore` into `root`'s parent, above the repository.
 
 use std::fs;
 use std::path::Path;
@@ -84,4 +87,27 @@ pub fn build_fixture(root: &Path) {
     fs::create_dir_all(&nested).unwrap();
     git_init(&nested);
     write(root, "vendor/nested/lib.c", "/* TODO nested repo */\n");
+    // Ignore-rule precedence cases the walker and admission must agree on.
+    // (a) The outer `*.log` rule stops at the nested repository's root.
+    write(root, "vendor/nested/debug.log", "TODO log in nested repo\n");
+    // (b) A `.gitignore` above the repository root does not apply.
+    write(root.parent().unwrap(), ".gitignore", "stray.txt\n");
+    write(
+        root,
+        "stray.txt",
+        "// TODO above-repo gitignore does not apply\n",
+    );
+    // (c) A `.ignore` whitelist beats a deeper `.gitignore` rule.
+    write(root, ".ignore", "!keep.txt\n!.whitelisted/\n");
+    write(root, "sub/.gitignore", "keep.txt\n");
+    write(root, "sub/keep.txt", "// TODO whitelisted by .ignore\n");
+    // An ignore-file whitelist beats the hidden rule.
+    write(
+        root,
+        ".whitelisted/notes.md",
+        "- [ ] whitelisted hidden directory\n",
+    );
+    // (d) `.rgignore` applies only while ignore files are respected.
+    write(root, ".rgignore", "scratch/\n");
+    write(root, "scratch/notes.txt", "// TODO ignored by rgignore\n");
 }
