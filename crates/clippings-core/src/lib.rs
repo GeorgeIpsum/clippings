@@ -1,5 +1,6 @@
 //! Core of Clippings: configuration, walking, scanning, tag extraction and the index.
 
+pub mod admission;
 pub mod config;
 pub mod error;
 pub mod fs;
