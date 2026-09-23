@@ -74,11 +74,9 @@ pub fn decorate(
                 Range { start: a, end: b },
             ),
             _ => {
-                let text_slice = &text[s..e];
-                let lead = text_slice
-                    .iter()
-                    .position(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
-                    .unwrap_or(text_slice.len());
+                // Leading whitespace is valid UTF-8, so its byte length is the
+                // same in `raw` as in `text`: a lossy U+FFFD stops the trim.
+                let lead = raw.len() - raw.trim_start().len();
                 let range = Range {
                     start: li.position(s + lead),
                     end: li.position(e),
@@ -295,65 +293,94 @@ mod tests {
     }
 
     #[test]
-    fn sub_tag_with_invalid_utf8_does_not_panic() {
-        // Issue 1: Invalid UTF-8 between tag and sub-tag must not panic.
-        // The sub-tag search uses memchr to avoid lossy string offset drift.
-        let mut text = b"// TODO".to_vec();
-        text.extend_from_slice(b"\x80\x80\x80"); // Invalid UTF-8
-        text.extend_from_slice(b"alice");
-        text.push(b'\n');
-        let text_str = String::from_utf8_lossy(&text);
+    fn sub_tag_after_invalid_utf8_on_the_last_line() {
+        // Lossy decoding turns each invalid byte into 3 bytes; the sub-tag
+        // offset must still be a byte offset into the original text.
+        let text = b"// TODO \x80\x80\x80 (alice)";
+        let mut s = Settings::default();
+        s.highlights.default_highlight = Attributes {
+            kind: Some("tag-and-subTag".into()),
+            ..Default::default()
+        };
+        s.regex.sub_tag_regex = r"\((.*?)\)".into();
+        s.highlights
+            .custom_highlight
+            .insert("alice".into(), Attributes::default());
+        let p = build(&s.core()).unwrap();
+        let todos = scan_text(&p, text, "a.ts");
+        assert_eq!(todos[0].sub_tag.as_deref(), Some("alice"));
+        let d = decorate(text, &todos, &s, &p);
+        // Each invalid byte is one UTF-16 unit: "// TODO " is 8, the three bytes
+        // and a space are 4, "(" is 1, so "alice" spans 13..18.
+        assert_eq!(d["alice"], vec![r(0, 13, 0, 18)]);
+    }
 
-        // This should not panic despite invalid UTF-8
-        let d = run(&text_str, Some("tag-and-subTag"), |s| {
-            s.regex.sub_tag_regex = r"alice".into();
-            s.highlights
-                .custom_highlight
-                .insert("alice".into(), Attributes::default());
-        });
-        // Verify sub-tag is found (if the regex matches)
-        // The key thing is that this doesn't panic
-        assert!(!d.is_empty() || d.contains_key("TODO"));
+    fn at(line: u32, character: u32) -> Position {
+        Position { line, character }
     }
 
     #[test]
-    fn untagged_match_with_trailing_whitespace() {
-        // Issue 2: Untagged match with trailing whitespace.
-        // The range end stays at raw match end (no right-trim).
-        // The key is the trimmed version.
-        let d = run("text\t\t\n", None, |s| {
-            // Match just the word "text" (preceded and followed by whitespace)
-            s.regex.regex = r"text\t\t".into()
-        });
-        // Should have the match, key is trimmed to "text"
-        if d.contains_key("text") {
-            // Range should include the tabs (trailing content)
-            // With the fix, trailing whitespace is NOT trimmed from the range
-            let range = &d["text"][0];
-            // End should include the tabs
-            assert!(
-                range.end.character > "text".len() as u32,
-                "end should include trailing tabs"
-            );
-        }
+    fn untagged_range_keeps_trailing_whitespace() {
+        // todo-tree moves only the start past whitespace; the key is trimmed.
+        let text = b"  NOTE(bob)  read\n";
+        let todo = Todo {
+            start: at(0, 0),
+            end: at(0, 13),
+            text_end: at(0, 17),
+            tag_start: None,
+            tag_end: None,
+            tag: String::new(),
+            sub_tag: None,
+            before: String::new(),
+            after: "read".into(),
+            extra_lines: Vec::new(),
+        };
+        let s = Settings::default();
+        let p = build(&s.core()).unwrap();
+        let d = decorate(text, &[todo], &s, &p);
+        assert_eq!(d["NOTE(bob)"], vec![r(0, 2, 0, 13)]);
     }
 
     #[test]
-    fn sub_tag_search_reaches_across_lines() {
-        // Issue 3: Sub-tag search extends to end of t.end.line, not just tag's line.
-        // This test verifies the search span for sub-tags is correct.
-        let text = "// TODO\nalice\n";
-        let d = run(text, Some("tag-and-subTag"), |s| {
-            s.highlights
-                .custom_highlight
-                .insert("alice".into(), Attributes::default());
-        });
-        // With default settings, "alice" should be found if it's within the search extent
-        // The key thing is that the search goes to end of t.end.line, not just tag's line
-        if let Some(alice_ranges) = d.get("alice") {
-            if !alice_ranges.is_empty() {
-                assert_eq!(alice_ranges[0].start.line, 1);
-            }
-        }
+    fn sub_tag_search_reaches_the_last_line_of_the_match() {
+        let text = b"// TODO first\n// alice second\n";
+        let todo = Todo {
+            start: Position {
+                line: 0,
+                character: 3,
+            },
+            end: Position {
+                line: 1,
+                character: 14,
+            },
+            text_end: Position {
+                line: 0,
+                character: 13,
+            },
+            tag_start: Some(Position {
+                line: 0,
+                character: 3,
+            }),
+            tag_end: Some(Position {
+                line: 0,
+                character: 7,
+            }),
+            tag: "TODO".into(),
+            sub_tag: Some("alice".into()),
+            before: String::new(),
+            after: "first".into(),
+            extra_lines: Vec::new(),
+        };
+        let mut s = Settings::default();
+        s.highlights.default_highlight = Attributes {
+            kind: Some("tag-and-subTag".into()),
+            ..Default::default()
+        };
+        s.highlights
+            .custom_highlight
+            .insert("alice".into(), Attributes::default());
+        let p = build(&s.core()).unwrap();
+        let d = decorate(text, &[todo], &s, &p);
+        assert_eq!(d["alice"], vec![r(1, 3, 1, 8)]);
     }
 }
