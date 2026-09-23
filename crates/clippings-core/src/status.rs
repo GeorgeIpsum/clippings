@@ -34,13 +34,13 @@ pub fn summarize(view: &View, settings: &Settings, active_file: Option<&Path>) -
     let activity = view.counts(settings, |a| a.hide_from_activity_bar, None);
     let total: usize = activity.iter().map(|(_, c)| c).sum();
     let mode = settings.general.status_bar;
-    let counts = match mode {
-        StatusBarMode::CurrentFile => match active_file {
-            Some(f) => view.counts(settings, |a| a.hide_from_status_bar, Some(f)),
-            None => Vec::new(),
-        },
-        _ => view.counts(settings, |a| a.hide_from_status_bar, None),
+    // Current file mode counts the active file; with no active editor
+    // todo-tree counts the whole workspace.
+    let file = match mode {
+        StatusBarMode::CurrentFile => active_file,
+        _ => None,
     };
+    let counts = view.counts(settings, |a| a.hide_from_status_bar, file);
     let title_total = if mode == StatusBarMode::CurrentFile {
         counts.iter().map(|(_, c)| c).sum()
     } else {
@@ -66,7 +66,7 @@ pub fn summarize(view: &View, settings: &Settings, active_file: Option<&Path>) -
     let (mut text, tooltip, visible) = match mode {
         StatusBarMode::None => (String::new(), String::new(), false),
         StatusBarMode::Total => (
-            format!("$(check) {total}"),
+            format!("$(check) {}", counts.iter().map(|(_, c)| c).sum::<usize>()),
             "Clippings total".to_string(),
             true,
         ),
@@ -263,6 +263,23 @@ mod tests {
             None,
         );
         assert_eq!(t.badge.value, 2);
+        // hideFromActivityBar affects only the badge (spec 11.2).
+        assert_eq!(t.status_bar.text, "$(check) 5");
+        let t = summary(
+            |s| {
+                s.general.show_activity_bar_badge = true;
+                s.general.status_bar = StatusBarMode::Total;
+                s.highlights.custom_highlight.insert(
+                    "TODO".into(),
+                    Attributes {
+                        hide_from_status_bar: Some(true),
+                        ..Default::default()
+                    },
+                );
+            },
+            None,
+        );
+        assert_eq!(t.badge.value, 5);
         assert_eq!(t.status_bar.text, "$(check) 2");
         let t = summary(
             |s| {
@@ -278,5 +295,11 @@ mod tests {
             None,
         );
         assert_eq!(t.status_bar.text, "$(check) BUG: 1  FIXME: 1");
+    }
+
+    #[test]
+    fn current_file_mode_without_an_editor_counts_the_workspace() {
+        let t = summary(|s| s.general.status_bar = StatusBarMode::CurrentFile, None);
+        assert_eq!(t.status_bar.text, "$(check) BUG: 1  FIXME: 1  TODO: 3");
     }
 }
