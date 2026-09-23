@@ -267,10 +267,11 @@ The view is rebuilt from the effective results after every relevant change and d
 | folder | `d:<absolute path>`; a compacted chain uses the deepest folder's path |
 | file | `f:<absolute path>`, or `f:<uri>` for non-`file` documents |
 | todo | `t:<line>:<column>` |
+| todo from a notebook cell, or whose parent is not a file node | `t:<uri>:<line>:<column>` |
 | extra line | `x:<index>` |
 | status node | `status:scan-mode`, `status:filter` |
 
-Top-level nodes have no parent prefix. A node promoted by root compaction keeps its own ID. Todo IDs include the line, so inserting lines above a todo gives it a new ID; this only affects selection on that todo. A todo whose parent is not a file node — in the tags-only view — uses the own key `t:<uri>:<line>:<column>` instead, since line and column alone would collide across files.
+Top-level nodes have no parent prefix. A node promoted by root compaction keeps its own ID. Todo IDs include the line, so inserting lines above a todo gives it a new ID; this only affects selection on that todo. A todo whose parent is not a file node — in the tags-only view — uses the own key `t:<uri>:<line>:<column>` instead, since line and column alone would collide across files. So does a todo whose URI differs from its file node's URI, which is a notebook cell's todo: the notebook's cells share one file node, and line and column alone would collide across cells.
 
 **Rendering** happens in Rust. Each node carries:
 
@@ -325,7 +326,7 @@ The server computes:
 ### 5.15 Navigation and export
 
 - **Go to next and previous** search the open buffer with the shared matcher from each selection's cursor. Next targets the first match starting after the cursor. Previous targets the last match that ends at or before the cursor, so the match the cursor is inside is skipped, as in todo-tree. Neither wraps. If any selection has no match, no selection moves.
-- **Export** produces the visible tree without status nodes. Folder and file nodes are keys holding objects, with flat-view file keys including their path label. A todo is a key `line N` whose value is its formatted label, or `line N:C` when another todo shares its line. In the tags-only view the key is prefixed with the file path. A multi-line todo's value is an object whose single key is its formatted label and whose value holds one empty object per extra line, keyed by the extra line's text. The output is JSON when `general.exportPath` ends in `.json` and an ASCII tree in treeify's format otherwise. The export path expands `~`, `${NAME}` environment variables and strftime placeholders.
+- **Export** produces the visible tree without status nodes. Folder and file nodes are keys holding objects, with flat-view file keys including their path label. A todo is a key `line N` whose value is its formatted label, or `line N:C` when another todo from the same document shares its line. A notebook cell's todo has its key prefixed with the cell URI; otherwise, in the tags-only view, the key is prefixed with the file path. A multi-line todo's value is an object whose single key is its formatted label and whose value holds one empty object per extra line, keyed by the extra line's text. The output is JSON when `general.exportPath` ends in `.json` and an ASCII tree in treeify's format otherwise. The export path expands `~`, `${NAME}` environment variables and strftime placeholders.
 
 ## 6. Protocol
 

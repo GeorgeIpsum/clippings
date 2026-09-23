@@ -432,3 +432,44 @@ fn an_invalid_glob_is_reported_and_the_server_keeps_answering() {
     assert!(r["result"]["nodes"].is_array(), "{r}");
     c.shutdown();
 }
+
+#[test]
+fn two_notebook_cells_with_todos_at_the_same_position_both_show() {
+    let (_t, root) = workspace();
+    let mut c = Client::start(&root, settings(), true);
+    c.settled_top();
+    c.drain();
+    let notebook = file_uri(&root.join("nb.ipynb")).replacen("file://", "vscode-notebook-cell:", 1);
+    for cell in ["c1", "c2"] {
+        c.notify(
+            "textDocument/didOpen",
+            json!({ "textDocument": {
+            "uri": format!("{notebook}#{cell}"), "languageId": "python", "version": 1,
+            "text": format!("# TODO in {cell}\n"),
+        } }),
+        );
+    }
+    let root_id = c.children(None)["nodes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let todos = loop {
+        c.expect("clippings/treeChanged", |_| true);
+        let files = c.children(Some(&root_id));
+        let Some(nb) = files["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["label"] == "nb.ipynb")
+        else {
+            continue;
+        };
+        let nb_id = nb["id"].as_str().unwrap().to_string();
+        let todos = labels(&c.children(Some(&nb_id)));
+        if todos.len() >= 2 {
+            break todos;
+        }
+    };
+    assert_eq!(todos, vec!["TODO in c1", "TODO in c2"]);
+    c.shutdown();
+}

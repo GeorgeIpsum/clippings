@@ -483,3 +483,58 @@ fn export_path_expands_home_env_and_time() {
         "/home/u/clip-20260923-1405.txt"
     );
 }
+
+#[test]
+fn notebook_cells_with_todos_at_the_same_position_both_appear() {
+    let mut a = todo(0, "TODO", "in cell one");
+    let mut b = todo(0, "TODO", "in cell two");
+    for t in [&mut a, &mut b] {
+        t.start = pos(0, 2);
+    }
+    let cells = [
+        "vscode-notebook-cell:/w/nb.ipynb#c1",
+        "vscode-notebook-cell:/w/nb.ipynb#c2",
+    ];
+    let files = vec![EffectiveFile {
+        path: Some(std::path::Path::new("/w/nb.ipynb")),
+        uri: None,
+        source: Source::Buffers,
+        todos: vec![
+            SourcedTodo {
+                buffer_uri: Some(cells[0]),
+                todo: &a,
+            },
+            SourcedTodo {
+                buffer_uri: Some(cells[1]),
+                todo: &b,
+            },
+        ],
+    }];
+    let v = View::build(&quiet(), &files, &[PathBuf::from("/w")]);
+    let file = "w:file:///w/f:/w/nb.ipynb";
+    assert_eq!(
+        ids(&v, Some(file)),
+        vec![
+            format!("{file}/t:{}:0:2", cells[0]),
+            format!("{file}/t:{}:0:2", cells[1]),
+        ]
+    );
+    assert_eq!(
+        labels(&v, Some(file)),
+        vec!["TODO in cell one", "TODO in cell two"]
+    );
+    let exported = export_value(&v, false);
+    let todos = exported["w"]["nb.ipynb"].as_object().unwrap();
+    assert_eq!(
+        todos.values().collect::<Vec<_>>(),
+        vec!["TODO in cell one", "TODO in cell two"],
+        "{exported}"
+    );
+
+    let mut tags_only = quiet();
+    tags_only.tree.tags_only = true;
+    let v = View::build(&tags_only, &files, &[PathBuf::from("/w")]);
+    assert_eq!(v.children_of(None).len(), 2);
+    let exported = export_value(&v, true);
+    assert_eq!(exported.as_object().unwrap().len(), 2, "{exported}");
+}

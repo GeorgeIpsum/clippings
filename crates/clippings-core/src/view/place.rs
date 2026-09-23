@@ -177,15 +177,15 @@ pub fn place(settings: &Settings, files: &[EffectiveFile], tree_roots: &[PathBuf
                 p
             };
 
-            let has_file_parent = parent.is_some_and(|p| {
-                let k = a.nodes[p].kind;
-                k == Kind::File
-                    || (k == Kind::SubTag
-                        && a.nodes[p]
-                            .parent
-                            .is_some_and(|g| a.nodes[g].kind == Kind::File))
+            let file_parent = parent.and_then(|p| match a.nodes[p].kind {
+                Kind::File => Some(p),
+                Kind::SubTag => a.nodes[p].parent.filter(|&g| a.nodes[g].kind == Kind::File),
+                _ => None,
             });
-            let todo_key = if has_file_parent {
+            // A notebook cell's todos share their file with the other
+            // cells', so line and column alone would collide.
+            let cell = disk_uri.as_ref().or(doc_uri.as_ref()) != Some(&uri);
+            let todo_key = if file_parent.is_some() && !cell {
                 format!("t:{}:{}", t.start.line, t.start.character)
             } else {
                 format!("t:{uri}:{}:{}", t.start.line, t.start.character)
@@ -200,6 +200,7 @@ pub fn place(settings: &Settings, files: &[EffectiveFile], tree_roots: &[PathBuf
                 after: t.after.clone(),
                 multi_line: multi,
                 text: raw.clone(),
+                cell,
             };
             let hidden = match hide_from_tree.get(&key) {
                 Some(h) => *h,

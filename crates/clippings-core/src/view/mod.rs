@@ -52,6 +52,9 @@ pub struct TodoData {
     pub multi_line: bool,
     /// For extra-line nodes: the line text.
     pub text: String,
+    /// The todo came from a notebook cell: its URI differs from its file
+    /// node's URI, so its ID and export key carry the URI.
+    pub cell: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -11,19 +11,23 @@ fn node_value(view: &View, i: usize, tags_only: bool) -> (String, Value) {
     if n.kind == Kind::Todo {
         let t = n.todo.as_ref().expect("todo data");
         let siblings = view.shaped.parent[i].map_or(&view.shaped.top, |p| &view.shaped.children[p]);
+        // Siblings share a line only within one document: a notebook
+        // cell's todos are told apart from other cells' by the cell URI.
         let shared = siblings.iter().filter(|&&s| {
             let o = &view.arena.nodes[s];
             o.kind == Kind::Todo
-                && o.todo
-                    .as_ref()
-                    .is_some_and(|ot| ot.start.line == t.start.line && o.path == n.path)
+                && o.todo.as_ref().is_some_and(|ot| {
+                    ot.start.line == t.start.line && o.path == n.path && ot.uri == t.uri
+                })
         });
         let mut key = if shared.count() > 1 {
             format!("line {}:{}", t.start.line + 1, t.start.character + 1)
         } else {
             format!("line {}", t.start.line + 1)
         };
-        if tags_only {
+        if t.cell {
+            key = format!("{} {key}", t.uri);
+        } else if tags_only {
             let file = n
                 .path
                 .as_ref()
