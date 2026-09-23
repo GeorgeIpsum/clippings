@@ -10,6 +10,8 @@ pub trait Fs: Send + Sync {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
     /// File size in bytes, without reading it.
     fn len(&self, path: &Path) -> io::Result<u64>;
+    /// Opens a file for streaming reads, for files too large to read whole.
+    fn open(&self, path: &Path) -> io::Result<Box<dyn io::Read + Send>>;
     /// Whether a path exists (file, directory or symlink).
     fn exists(&self, path: &Path) -> bool;
     /// Whether a path is a directory.
@@ -25,6 +27,9 @@ impl Fs for NativeFs {
     }
     fn len(&self, path: &Path) -> io::Result<u64> {
         Ok(std::fs::metadata(path)?.len())
+    }
+    fn open(&self, path: &Path) -> io::Result<Box<dyn io::Read + Send>> {
+        Ok(Box::new(std::fs::File::open(path)?))
     }
     fn exists(&self, path: &Path) -> bool {
         std::fs::symlink_metadata(path).is_ok()

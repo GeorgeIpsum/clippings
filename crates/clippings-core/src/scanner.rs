@@ -189,14 +189,14 @@ pub fn scan_file(fs: &dyn Fs, p: &ScanPattern, path: &Path) -> io::Result<Option
         tracing::debug!("skipping {path_str}: larger than the multi-line heap limit");
         return Ok(None);
     }
-    let file = std::fs::File::open(path)?;
+    let reader = fs.open(path)?;
     let mut sink = TodoSink {
         pattern: p,
         path: &path_str,
         todos: Vec::new(),
         binary: false,
     };
-    if let Err(e) = searcher(p).search_file(&p.matcher, &file, &mut sink) {
+    if let Err(e) = searcher(p).search_reader(&p.matcher, reader, &mut sink) {
         tracing::debug!("skipping {path_str}: {e}");
         return Ok(None);
     }
