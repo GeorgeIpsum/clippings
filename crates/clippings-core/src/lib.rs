@@ -1,6 +1,8 @@
 //! Core of Clippings: configuration, walking, scanning, tag extraction and the index.
 
 pub mod admission;
+pub mod colour_names;
+pub mod colours;
 pub mod comments;
 pub mod config;
 pub mod error;
