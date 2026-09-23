@@ -59,13 +59,25 @@ impl<'a> LineIndex<'a> {
     pub fn offset(&self, pos: Position) -> usize {
         let line = (pos.line as usize).min(self.starts.len() - 1);
         let (start, end) = self.line_range(line);
-        let text = String::from_utf8_lossy(&self.text[start..end]);
         let mut units = 0usize;
-        for (i, ch) in text.char_indices() {
-            if units >= pos.character as usize {
-                return start + i;
+        let mut byte = 0usize;
+        for chunk in self.text[start..end].utf8_chunks() {
+            for ch in chunk.valid().chars() {
+                if units >= pos.character as usize {
+                    return start + byte;
+                }
+                units += ch.len_utf16();
+                byte += ch.len_utf8();
             }
-            units += ch.len_utf16();
+            if !chunk.invalid().is_empty() {
+                if units >= pos.character as usize {
+                    return start + byte;
+                }
+                // from_utf8_lossy maps each invalid run to one U+FFFD, one
+                // UTF-16 unit, which is what `position` counts.
+                units += 1;
+                byte += chunk.invalid().len();
+            }
         }
         end
     }
@@ -169,5 +181,14 @@ mod tests {
             14,
             "clamped to line end"
         );
+    }
+
+    #[test]
+    fn offset_inverts_position_on_invalid_utf8() {
+        let t = b"caf\xe9 // TODO latin1\n\xff\xfe x";
+        let li = LineIndex::new(t);
+        for off in [0, 3, 4, 5, 8, 12, 19, 21, 22, 24] {
+            assert_eq!(li.offset(li.position(off)), off, "offset {off}");
+        }
     }
 }
