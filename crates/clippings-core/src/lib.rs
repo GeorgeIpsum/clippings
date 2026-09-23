@@ -14,6 +14,7 @@ pub mod ignore_rules;
 pub mod index;
 pub mod labels;
 pub mod model;
+pub mod navigate;
 pub mod pattern;
 pub mod position;
 pub mod report;
