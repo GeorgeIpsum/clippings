@@ -4,3 +4,4 @@ node_modules/
 /extension/bin/
 /extension/dist/
 *.pending-snap
+/.superpowers/

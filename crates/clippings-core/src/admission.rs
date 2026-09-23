@@ -71,6 +71,10 @@ impl Admission {
     }
 
     /// Whether a file on disk may enter the index. Binary detection happens later, in the scanner.
+    ///
+    /// Known gap: on Windows the walker also treats files and directories
+    /// with the HIDDEN attribute as hidden, while this checks only the
+    /// dot-prefix rule, so the two can disagree there.
     pub fn admits_disk(&self, path: &Path) -> bool {
         let Some(root) = deepest_root(path, &self.walked_roots) else {
             return false;

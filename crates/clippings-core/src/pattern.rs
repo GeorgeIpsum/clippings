@@ -220,7 +220,7 @@ pub fn build(cfg: &CoreConfig) -> Result<ScanPattern, CoreError> {
 
     let (matcher, engine) = if uses_unsupported_feature(&source) {
         let re = fancy_regex::Regex::new(&format!("{}{}", flag_prefix(cfg), source))
-            .map_err(|e| CoreError::InvalidRegex(e.to_string()))?;
+            .map_err(|e| CoreError::InvalidRegex(format!("regex: {e}")))?;
         (PatternMatcher::Fancy(FancyMatcher { re }), Engine::Fancy)
     } else {
         let built = match grep_builder(cfg, multi_line).build(&source) {
@@ -230,7 +230,7 @@ pub fn build(cfg: &CoreConfig) -> Result<ScanPattern, CoreError> {
             }
             other => other,
         };
-        let m = built.map_err(|e| CoreError::InvalidRegex(e.to_string()))?;
+        let m = built.map_err(|e| CoreError::InvalidRegex(format!("regex: {e}")))?;
         (PatternMatcher::Grep(m), Engine::Grep)
     };
 
@@ -240,11 +240,11 @@ pub fn build(cfg: &CoreConfig) -> Result<ScanPattern, CoreError> {
         .contains("$TAGS")
         .then(|| regex::Regex::new(&format!("{ci}(?:{})", tag_alternation(&tags))))
         .transpose()
-        .map_err(|e| CoreError::InvalidRegex(e.to_string()))?;
+        .map_err(|e| CoreError::InvalidRegex(format!("tags: {e}")))?;
     let sub_tag_re = (!cfg.sub_tag_regex.is_empty())
         .then(|| regex::Regex::new(&format!("{ci}{}", cfg.sub_tag_regex)))
         .transpose()
-        .map_err(|e| CoreError::InvalidRegex(e.to_string()))?;
+        .map_err(|e| CoreError::InvalidRegex(format!("subTagRegex: {e}")))?;
 
     Ok(ScanPattern {
         source,
@@ -363,6 +363,49 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(build(&cfg), Err(CoreError::InvalidRegex(_))));
+    }
+
+    #[test]
+    fn invalid_regex_errors_name_the_setting() {
+        let sub = CoreConfig {
+            sub_tag_regex: "(unclosed".into(),
+            ..Default::default()
+        };
+        let msg = build(&sub).unwrap_err().to_string();
+        assert!(msg.starts_with("invalid regex: subTagRegex: "), "{msg}");
+        let main = CoreConfig {
+            regex: "(unclosed".into(),
+            ..Default::default()
+        };
+        let msg = build(&main).unwrap_err().to_string();
+        assert!(msg.starts_with("invalid regex: regex: "), "{msg}");
+        let fancy = CoreConfig {
+            regex: "(?<=x)(unclosed".into(),
+            ..Default::default()
+        };
+        let msg = build(&fancy).unwrap_err().to_string();
+        assert!(msg.starts_with("invalid regex: regex: "), "{msg}");
+    }
+
+    #[test]
+    fn zero_width_fancy_pattern_terminates() {
+        let cfg = CoreConfig {
+            regex: "(?!zz)($TAGS)?".into(),
+            ..Default::default()
+        };
+        let p = build(&cfg).unwrap();
+        assert_eq!(p.engine, Engine::Fancy);
+        for text in [
+            "é😀 // TODO x\n".as_bytes(),
+            b"\xe9\xff // TODO x\n".as_slice(),
+        ] {
+            let t = crate::scanner::scan_text(&p, text, "a.ts");
+            assert_eq!(
+                t.iter().map(|t| t.tag.as_str()).collect::<Vec<_>>(),
+                vec!["TODO"],
+                "{text:?}"
+            );
+        }
     }
 
     #[test]

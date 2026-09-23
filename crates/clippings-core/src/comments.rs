@@ -2,6 +2,8 @@
 //! `comment-patterns` table todo-tree uses: single-line leaders for extra
 //! lines and block markers for the primary text.
 
+use std::path::Path;
+
 pub struct CommentSyntax {
     pub line: &'static [&'static str],
     pub block: &'static [(&'static str, &'static str)],
@@ -52,11 +54,20 @@ const NONE: CommentSyntax = CommentSyntax {
     block: &[],
 };
 
+/// The comment syntax for `path`, from its file name's extension, or for a
+/// few well-known extensionless names such as `Dockerfile`.
 pub fn syntax_for(path: &str) -> &'static CommentSyntax {
-    let ext = path
-        .rsplit_once('.')
-        .map(|(_, e)| e.to_ascii_lowercase())
-        .unwrap_or_default();
+    let path = Path::new(path);
+    let ext = match path.extension() {
+        Some(e) => e.to_string_lossy().to_ascii_lowercase(),
+        None => {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            return match name.to_ascii_lowercase().as_str() {
+                "dockerfile" | "makefile" | "rakefile" | "gemfile" => &HASH,
+                _ => &NONE,
+            };
+        }
+    };
     match ext.as_str() {
         "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "cs" | "java" | "js" | "jsx" | "mjs" | "cjs"
         | "ts" | "tsx" | "mts" | "cts" | "jsonc" | "go" | "rs" | "swift" | "kt" | "kts"
@@ -110,6 +121,17 @@ mod tests {
         assert_eq!(strip_line_comment("# more", "a.py"), "more");
         assert_eq!(strip_line_comment("-- more", "q.sql"), "more");
         assert_eq!(strip_line_comment("// kept", "a.unknown"), "// kept");
+    }
+
+    #[test]
+    fn syntax_comes_from_the_file_name_only() {
+        assert_eq!(syntax_for("a/b.c/Dockerfile").line, &["#"]);
+        assert_eq!(syntax_for("Makefile").line, &["#"]);
+        assert_eq!(syntax_for("x/Rakefile").line, &["#"]);
+        assert_eq!(syntax_for("x/Gemfile").line, &["#"]);
+        assert!(syntax_for("x.dir/README").line.is_empty());
+        assert!(syntax_for("CMakeLists.txt").line.is_empty());
+        assert_eq!(syntax_for("a/b.RS").line, &["//"]);
     }
 
     #[test]
