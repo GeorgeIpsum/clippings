@@ -1,0 +1,138 @@
+//! Parallel walk and scan of the walked roots (spec section 5.3 and 5.5).
+
+use crate::admission::rel_components;
+use crate::config::CoreConfig;
+use crate::fs::Fs;
+use crate::globs::{slash_path, BuiltInExcludes, GlobLayers};
+use crate::model::FileResult;
+use crate::pattern::ScanPattern;
+use crate::roots::deepest_root;
+use crate::scanner::scan_file;
+use crate::CoreError;
+use ignore::{DirEntry, WalkBuilder, WalkState};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+pub struct WalkOutcome {
+    /// Files with at least one todo, sorted by path.
+    pub files: Vec<FileResult>,
+    /// Every admitted text file seen, sorted, including files without todos.
+    pub seen: Vec<PathBuf>,
+    pub cancelled: bool,
+}
+
+struct EntryFilter {
+    roots: Vec<PathBuf>,
+    layers: GlobLayers,
+    built_in: BuiltInExcludes,
+    ignore_submodules: bool,
+}
+
+impl EntryFilter {
+    fn keep(&self, e: &DirEntry) -> bool {
+        if e.depth() == 0 {
+            return true;
+        }
+        let path = e.path();
+        let Some(root) = deepest_root(path, &self.roots) else {
+            return true;
+        };
+        let rel = rel_components(path, root);
+        let rel_refs: Vec<&str> = rel.iter().map(String::as_str).collect();
+        let rel_str = path.strip_prefix(root).ok().map(slash_path);
+        let abs = slash_path(path);
+        if e.file_type().is_some_and(|t| t.is_dir()) {
+            if self.built_in.dir_excluded(&rel_refs)
+                || self.layers.dir_pruned(&abs, rel_str.as_deref())
+            {
+                return false;
+            }
+            return !(self.ignore_submodules && path.join(".git").exists());
+        }
+        self.layers.file_allowed(&abs, rel_str.as_deref())
+    }
+}
+
+pub fn walk_and_scan(
+    cfg: &CoreConfig,
+    roots: &[PathBuf],
+    pattern: &ScanPattern,
+    fs: Arc<dyn Fs>,
+    cancel: &AtomicBool,
+) -> Result<WalkOutcome, CoreError> {
+    if roots.is_empty() {
+        return Ok(WalkOutcome {
+            files: Vec::new(),
+            seen: Vec::new(),
+            cancelled: false,
+        });
+    }
+    let filter = Arc::new(EntryFilter {
+        roots: roots.to_vec(),
+        layers: GlobLayers::new(cfg)?,
+        built_in: BuiltInExcludes::new(&cfg.built_in_excludes),
+        ignore_submodules: cfg.ignore_git_submodules,
+    });
+    let mut builder = WalkBuilder::new(&roots[0]);
+    for r in &roots[1..] {
+        builder.add(r);
+    }
+    builder
+        .hidden(!cfg.include_hidden_files)
+        .add_custom_ignore_filename(".rgignore")
+        .threads(std::thread::available_parallelism().map_or(4, |n| n.get()));
+    if !cfg.respect_ignore_files {
+        builder
+            .ignore(false)
+            .git_ignore(false)
+            .git_exclude(false)
+            .git_global(false)
+            .parents(false);
+    }
+    let f = filter.clone();
+    builder.filter_entry(move |e| f.keep(e));
+
+    let results: Mutex<Vec<FileResult>> = Mutex::new(Vec::new());
+    let seen: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    let cancelled = AtomicBool::new(false);
+    builder.build_parallel().run(|| {
+        let fs = fs.clone();
+        let (results, seen, cancelled) = (&results, &seen, &cancelled);
+        Box::new(move |entry| {
+            if cancel.load(Ordering::Relaxed) {
+                cancelled.store(true, Ordering::Relaxed);
+                return WalkState::Quit;
+            }
+            let Ok(entry) = entry else {
+                return WalkState::Continue;
+            };
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
+                return WalkState::Continue;
+            }
+            match scan_file(fs.as_ref(), pattern, entry.path()) {
+                Ok(Some(todos)) => {
+                    seen.lock().unwrap().push(entry.path().to_path_buf());
+                    if !todos.is_empty() {
+                        results.lock().unwrap().push(FileResult {
+                            path: entry.path().to_path_buf(),
+                            todos,
+                        });
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => tracing::debug!("skipping {}: {e}", entry.path().display()),
+            }
+            WalkState::Continue
+        })
+    });
+    let mut files = results.into_inner().unwrap();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut seen = seen.into_inner().unwrap();
+    seen.sort();
+    Ok(WalkOutcome {
+        files,
+        seen,
+        cancelled: cancelled.into_inner(),
+    })
+}

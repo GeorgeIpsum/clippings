@@ -11,8 +11,10 @@ pub mod ignore_rules;
 pub mod model;
 pub mod pattern;
 pub mod position;
+pub mod report;
 pub mod roots;
 pub mod scanner;
+pub mod walker;
 
 pub use error::CoreError;
 

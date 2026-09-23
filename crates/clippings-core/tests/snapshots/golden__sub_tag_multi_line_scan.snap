@@ -1,0 +1,417 @@
+---
+source: crates/clippings-core/tests/golden.rs
+expression: report
+---
+{
+  "files": [
+    {
+      "path": "app/[slug]/page.tsx",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 0,
+            "character": 21
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 3
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 7
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "",
+          "after": "dynamic route",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "docs/notes.md",
+      "todos": [
+        {
+          "start": {
+            "line": 1,
+            "character": 0
+          },
+          "end": {
+            "line": 1,
+            "character": 16
+          },
+          "tagStart": {
+            "line": 1,
+            "character": 2
+          },
+          "tagEnd": {
+            "line": 1,
+            "character": 5
+          },
+          "tag": "[ ]",
+          "subTag": null,
+          "before": "",
+          "after": "write docs",
+          "extraLines": []
+        },
+        {
+          "start": {
+            "line": 2,
+            "character": 0
+          },
+          "end": {
+            "line": 2,
+            "character": 15
+          },
+          "tagStart": {
+            "line": 2,
+            "character": 2
+          },
+          "tagEnd": {
+            "line": 2,
+            "character": 5
+          },
+          "tag": "[x]",
+          "subTag": null,
+          "before": "",
+          "after": "done item",
+          "extraLines": []
+        },
+        {
+          "start": {
+            "line": 3,
+            "character": 0
+          },
+          "end": {
+            "line": 3,
+            "character": 26
+          },
+          "tagStart": {
+            "line": 3,
+            "character": 5
+          },
+          "tagEnd": {
+            "line": 3,
+            "character": 9
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "",
+          "after": "html comment",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "src/app.py",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 0,
+            "character": 28
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 2
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 5
+          },
+          "tag": "BUG",
+          "subTag": null,
+          "before": "",
+          "after": "crashes on empty input",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "src/crlf.ts",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 0,
+            "character": 20
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 3
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 7
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "",
+          "after": "windows line",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "src/lib.rs",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 10
+          },
+          "end": {
+            "line": 0,
+            "character": 32
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 13
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 17
+          },
+          "tag": "TODO",
+          "subTag": "alice",
+          "before": "fn a() {}",
+          "after": "sub tag",
+          "extraLines": []
+        },
+        {
+          "start": {
+            "line": 1,
+            "character": 0
+          },
+          "end": {
+            "line": 1,
+            "character": 31
+          },
+          "tagStart": {
+            "line": 1,
+            "character": 3
+          },
+          "tagEnd": {
+            "line": 1,
+            "character": 7
+          },
+          "tag": "HACK",
+          "subTag": null,
+          "before": "",
+          "after": ": two // XXX on one line",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "src/long.ts",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 0,
+            "character": 2008
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 3
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 7
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "",
+          "after": "long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long lo",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "src/main.ts",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 20
+          },
+          "end": {
+            "line": 0,
+            "character": 36
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 23
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 27
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "export const x = 1;",
+          "after": "rename x",
+          "extraLines": []
+        },
+        {
+          "start": {
+            "line": 1,
+            "character": 0
+          },
+          "end": {
+            "line": 1,
+            "character": 25
+          },
+          "tagStart": {
+            "line": 1,
+            "character": 3
+          },
+          "tagEnd": {
+            "line": 1,
+            "character": 8
+          },
+          "tag": "FIXME",
+          "subTag": null,
+          "before": "",
+          "after": "block comment",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "src/multi.ts",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 2,
+            "character": 15
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 3
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 7
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "",
+          "after": "first line",
+          "extraLines": [
+            {
+              "line": 1,
+              "text": "second line"
+            },
+            {
+              "line": 2,
+              "text": "third line"
+            }
+          ]
+        },
+        {
+          "start": {
+            "line": 3,
+            "character": 0
+          },
+          "end": {
+            "line": 4,
+            "character": 19
+          },
+          "tagStart": {
+            "line": 3,
+            "character": 3
+          },
+          "tagEnd": {
+            "line": 3,
+            "character": 8
+          },
+          "tag": "FIXME",
+          "subTag": null,
+          "before": "",
+          "after": "next",
+          "extraLines": [
+            {
+              "line": 4,
+              "text": "next continued"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/unicode.ts",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 17
+          },
+          "end": {
+            "line": 0,
+            "character": 40
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 20
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 24
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "const é = 'ééé';",
+          "after": "after non-ascii",
+          "extraLines": []
+        }
+      ]
+    },
+    {
+      "path": "vendor/nested/lib.c",
+      "todos": [
+        {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 0,
+            "character": 22
+          },
+          "tagStart": {
+            "line": 0,
+            "character": 3
+          },
+          "tagEnd": {
+            "line": 0,
+            "character": 7
+          },
+          "tag": "TODO",
+          "subTag": null,
+          "before": "",
+          "after": "nested repo",
+          "extraLines": []
+        }
+      ]
+    }
+  ]
+}
