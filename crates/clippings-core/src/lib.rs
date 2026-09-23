@@ -15,6 +15,7 @@ pub mod position;
 pub mod report;
 pub mod roots;
 pub mod scanner;
+pub mod settings;
 pub mod uri;
 pub mod walker;
 
