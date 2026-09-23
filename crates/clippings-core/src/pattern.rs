@@ -30,6 +30,58 @@ pub enum Engine {
     Fancy,
 }
 
+/// Lossy UTF-8 conversion of bytes with a map between string and byte offsets.
+pub(crate) struct Lossy {
+    pub text: String,
+    /// (string offset, byte offset) at the start of each valid run and each
+    /// replacement character, then at the end.
+    map: Vec<(usize, usize)>,
+}
+
+impl Lossy {
+    pub fn new(bytes: &[u8]) -> Self {
+        let mut text = String::with_capacity(bytes.len());
+        let mut map = Vec::new();
+        let mut byte = 0;
+        for chunk in bytes.utf8_chunks() {
+            map.push((text.len(), byte));
+            text.push_str(chunk.valid());
+            byte += chunk.valid().len();
+            for _ in chunk.invalid() {
+                map.push((text.len(), byte));
+                text.push('\u{FFFD}');
+                byte += 1;
+            }
+        }
+        map.push((text.len(), byte));
+        Self { text, map }
+    }
+
+    /// The byte offset of string offset `s`.
+    pub fn to_byte(&self, s: usize) -> usize {
+        let i = self.map.partition_point(|&(so, _)| so <= s) - 1;
+        let (so, bo) = self.map[i];
+        // Inside a valid chunk offsets advance together; a replacement
+        // character (3 bytes) stands for one invalid byte.
+        if self
+            .map
+            .get(i + 1)
+            .is_some_and(|&(nso, nbo)| nso - so != nbo - bo)
+        {
+            bo
+        } else {
+            bo + (s - so)
+        }
+    }
+
+    /// The string offset of byte offset `b`.
+    pub fn to_str(&self, b: usize) -> usize {
+        let i = self.map.partition_point(|&(_, bo)| bo <= b) - 1;
+        let (so, bo) = self.map[i];
+        so + (b - bo)
+    }
+}
+
 /// fancy-regex behind the `grep_matcher::Matcher` trait.
 #[derive(Clone, Debug)]
 pub struct FancyMatcher {
@@ -57,43 +109,10 @@ impl Matcher for FancyMatcher {
         if let Ok(text) = std::str::from_utf8(haystack) {
             return Ok(self.find_str(text, at).map(|(s, e)| Match::new(s, e)));
         }
-        // Lossy conversion with an offset map back to bytes.
-        let mut text = String::with_capacity(haystack.len());
-        let mut map: Vec<(usize, usize)> = Vec::new(); // (string offset, byte offset)
-        let mut byte = 0;
-        for chunk in haystack.utf8_chunks() {
-            map.push((text.len(), byte));
-            text.push_str(chunk.valid());
-            byte += chunk.valid().len();
-            for _ in chunk.invalid() {
-                map.push((text.len(), byte));
-                text.push('\u{FFFD}');
-                byte += 1;
-            }
-        }
-        map.push((text.len(), byte));
-        let to_byte = |s: usize| {
-            let i = map.partition_point(|&(so, _)| so <= s) - 1;
-            let (so, bo) = map[i];
-            // Inside a valid chunk offsets advance together; a replacement
-            // character (3 bytes) stands for one invalid byte.
-            if map
-                .get(i + 1)
-                .is_some_and(|&(nso, nbo)| nso - so != nbo - bo)
-            {
-                bo
-            } else {
-                bo + (s - so)
-            }
-        };
-        let to_str = |b: usize| {
-            let i = map.partition_point(|&(_, bo)| bo <= b) - 1;
-            let (so, bo) = map[i];
-            so + (b - bo)
-        };
+        let lossy = Lossy::new(haystack);
         Ok(self
-            .find_str(&text, to_str(at))
-            .map(|(s, e)| Match::new(to_byte(s), to_byte(e))))
+            .find_str(&lossy.text, lossy.to_str(at))
+            .map(|(s, e)| Match::new(lossy.to_byte(s), lossy.to_byte(e))))
     }
 
     fn new_captures(&self) -> Result<NoCaptures, NoError> {

@@ -4,7 +4,7 @@ use crate::comments::strip_line_comment;
 use crate::extract::extract;
 use crate::fs::Fs;
 use crate::model::{ExtraLine, Todo};
-use crate::pattern::{Engine, ScanPattern};
+use crate::pattern::{Engine, Lossy, ScanPattern};
 use crate::position::LineIndex;
 use grep_matcher::{LineTerminator, Matcher};
 use grep_searcher::{BinaryDetection, MmapChoice, Searcher, SearcherBuilder, Sink, SinkMatch};
@@ -75,9 +75,17 @@ fn todos_from_lines(
         let end_line = li.line_of(e - 1);
         let (_, first_end) = li.line_range(start_line);
         let win_end = floor_char_boundary(bytes, first_end.max(s).min(s + WINDOW_CAP));
-        let window = String::from_utf8_lossy(&bytes[s..win_end]);
-        let match_len = e.min(win_end) - s;
-        let ex = extract(p, &window, match_len, path);
+        let window = &bytes[s..win_end];
+        // Lossy conversion may change offsets; `lossy` maps them back.
+        let (text, lossy) = match std::str::from_utf8(window) {
+            Ok(t) => (t, None),
+            Err(_) => ("", Some(Lossy::new(window))),
+        };
+        let text = lossy.as_ref().map_or(text, |l| l.text.as_str());
+        let match_len = lossy
+            .as_ref()
+            .map_or(e.min(win_end) - s, |l| l.to_str(e.min(win_end) - s));
+        let ex = extract(p, text, match_len, path);
 
         let (line_start, _) = li.line_range(start_line);
         let before_start = ceil_char_boundary(bytes, s.saturating_sub(WINDOW_CAP).max(line_start));
@@ -100,11 +108,13 @@ fn todos_from_lines(
         } else {
             Vec::new()
         };
-        // Window bytes equal source bytes unless lossy conversion changed them.
-        let tag_pos = ex
-            .tag_range
-            .filter(|_| window.len() == win_end - s)
-            .map(|(a, b)| (shift(li.position(s + a)), shift(li.position(s + b))));
+        let to_byte = |i: usize| lossy.as_ref().map_or(i, |l| l.to_byte(i));
+        let tag_pos = ex.tag_range.map(|(a, b)| {
+            (
+                shift(li.position(s + to_byte(a))),
+                shift(li.position(s + to_byte(b))),
+            )
+        });
         out.push(Todo {
             start: shift(li.position(s)),
             end: shift(li.position(e)),
@@ -148,7 +158,9 @@ impl Sink for TodoSink<'_> {
     }
 }
 
-fn searcher(p: &ScanPattern) -> Searcher {
+/// A searcher configured for `p`. Build one per thread and reuse it
+/// across files with [`scan_file_with`].
+pub fn searcher(p: &ScanPattern) -> Searcher {
     let term = match (p.multi_line, p.engine) {
         (true, _) | (false, Engine::Fancy) => LineTerminator::byte(b'\n'),
         (false, Engine::Grep) => LineTerminator::crlf(),
@@ -163,27 +175,41 @@ fn searcher(p: &ScanPattern) -> Searcher {
         .build()
 }
 
-/// Scans decoded UTF-8 text held in memory, such as an open buffer.
-pub fn scan_text(p: &ScanPattern, text: &[u8], path: &str) -> Vec<Todo> {
+fn scan_text_with(s: &mut Searcher, p: &ScanPattern, text: &[u8], path: &str) -> Vec<Todo> {
     let mut sink = TodoSink {
         pattern: p,
         path,
         todos: Vec::new(),
         binary: false,
     };
-    let mut s = searcher(p);
     // Binary detection was done by `decode`; the searcher only sees text.
     s.set_binary_detection(BinaryDetection::none());
     let _ = s.search_slice(&p.matcher, text, &mut sink);
     sink.todos
 }
 
+/// Scans decoded UTF-8 text held in memory, such as an open buffer.
+pub fn scan_text(p: &ScanPattern, text: &[u8], path: &str) -> Vec<Todo> {
+    scan_text_with(&mut searcher(p), p, text, path)
+}
+
 /// Scans a file on disk. `Ok(None)` means binary or skipped.
 pub fn scan_file(fs: &dyn Fs, p: &ScanPattern, path: &Path) -> io::Result<Option<Vec<Todo>>> {
+    scan_file_with(&mut searcher(p), fs, p, path)
+}
+
+/// [`scan_file`] with a reused searcher, which must come from
+/// [`searcher`] for the same pattern.
+pub fn scan_file_with(
+    s: &mut Searcher,
+    fs: &dyn Fs,
+    p: &ScanPattern,
+    path: &Path,
+) -> io::Result<Option<Vec<Todo>>> {
     let path_str = path.to_string_lossy();
     let len = fs.len(path)? as usize;
     if len <= HEAP_LIMIT {
-        return Ok(decode(fs.read(path)?).map(|text| scan_text(p, &text, &path_str)));
+        return Ok(decode(fs.read(path)?).map(|text| scan_text_with(s, p, &text, &path_str)));
     }
     if p.multi_line {
         tracing::debug!("skipping {path_str}: larger than the multi-line heap limit");
@@ -196,7 +222,8 @@ pub fn scan_file(fs: &dyn Fs, p: &ScanPattern, path: &Path) -> io::Result<Option
         todos: Vec::new(),
         binary: false,
     };
-    if let Err(e) = searcher(p).search_reader(&p.matcher, reader, &mut sink) {
+    s.set_binary_detection(BinaryDetection::quit(b'\x00'));
+    if let Err(e) = s.search_reader(&p.matcher, reader, &mut sink) {
         tracing::debug!("skipping {path_str}: {e}");
         return Ok(None);
     }
@@ -372,6 +399,26 @@ mod tests {
     }
 
     #[test]
+    fn invalid_utf8_after_the_tag_keeps_tag_positions() {
+        let p = build(&CoreConfig::default()).unwrap();
+        let t = scan_text(&p, b"// TODO caf\xe9\n", "a.c");
+        assert_eq!(t.len(), 1);
+        assert_eq!(
+            (t[0].tag_start, t[0].tag_end),
+            (
+                Some(Position {
+                    line: 0,
+                    character: 3
+                }),
+                Some(Position {
+                    line: 0,
+                    character: 7
+                })
+            )
+        );
+    }
+
+    #[test]
     fn tag_at_end_of_file_without_newline() {
         let t = scan(CoreConfig::default(), "x\n// TODO last", "a.ts");
         assert_eq!(t.len(), 1);
@@ -390,6 +437,34 @@ mod tests {
             t.iter().map(|t| t.tag.as_str()).collect::<Vec<_>>(),
             vec!["TODO"]
         );
+    }
+
+    #[test]
+    fn a_reused_searcher_scans_like_a_fresh_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("big.txt");
+        let mut body = "// TODO first\n".to_string();
+        while body.len() <= HEAP_LIMIT {
+            body.push_str(&format!("{}\n", "a".repeat(1023)));
+        }
+        body.push_str("\0\n// FIXME after nul\n");
+        std::fs::write(&big, &body).unwrap();
+        let small = dir.path().join("a.ts");
+        std::fs::write(&small, "// TODO a\0").unwrap();
+        let text = dir.path().join("b.ts");
+        std::fs::write(&text, "x\n// TODO b\n").unwrap();
+        let p = build(&CoreConfig::default()).unwrap();
+        let fs = crate::fs::NativeFs;
+        let mut s = searcher(&p);
+        for path in [&text, &big, &small, &text, &big] {
+            assert_eq!(
+                scan_file_with(&mut s, &fs, &p, path).unwrap(),
+                scan_file(&fs, &p, path).unwrap(),
+                "{}",
+                path.display()
+            );
+        }
+        assert!(scan_file(&fs, &p, &big).unwrap().is_none(), "binary");
     }
 
     #[test]

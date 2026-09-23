@@ -7,9 +7,10 @@ use crate::globs::{slash_path, BuiltInExcludes, GlobLayers};
 use crate::model::FileResult;
 use crate::pattern::ScanPattern;
 use crate::roots::deepest_root;
-use crate::scanner::scan_file;
+use crate::scanner::{scan_file_with, searcher};
 use crate::CoreError;
 use ignore::{DirEntry, WalkBuilder, WalkState};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -94,31 +95,38 @@ pub fn walk_and_scan(
     let f = filter.clone();
     builder.filter_entry(move |e| f.keep(e));
 
-    let results: Mutex<Vec<FileResult>> = Mutex::new(Vec::new());
-    let seen: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    // Keyed by path: overlapping roots reach the same file more than once.
+    let results: Mutex<BTreeMap<PathBuf, FileResult>> = Mutex::new(BTreeMap::new());
+    let seen: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
     let cancelled = AtomicBool::new(false);
     builder.build_parallel().run(|| {
         let fs = fs.clone();
+        let mut searcher = searcher(pattern);
         let (results, seen, cancelled) = (&results, &seen, &cancelled);
         Box::new(move |entry| {
             if cancel.load(Ordering::Relaxed) {
                 cancelled.store(true, Ordering::Relaxed);
                 return WalkState::Quit;
             }
-            let Ok(entry) = entry else {
-                return WalkState::Continue;
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::debug!("walk: {e}");
+                    return WalkState::Continue;
+                }
             };
             if !entry.file_type().is_some_and(|t| t.is_file()) {
                 return WalkState::Continue;
             }
-            match scan_file(fs.as_ref(), pattern, entry.path()) {
+            match scan_file_with(&mut searcher, fs.as_ref(), pattern, entry.path()) {
                 Ok(Some(todos)) => {
-                    seen.lock().unwrap().push(entry.path().to_path_buf());
+                    let path = entry.path().to_path_buf();
+                    seen.lock().unwrap().insert(path.clone());
                     if !todos.is_empty() {
-                        results.lock().unwrap().push(FileResult {
-                            path: entry.path().to_path_buf(),
-                            todos,
-                        });
+                        results
+                            .lock()
+                            .unwrap()
+                            .insert(path.clone(), FileResult { path, todos });
                     }
                 }
                 Ok(None) => {}
@@ -127,13 +135,43 @@ pub fn walk_and_scan(
             WalkState::Continue
         })
     });
-    let mut files = results.into_inner().unwrap();
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    let mut seen = seen.into_inner().unwrap();
-    seen.sort();
     Ok(WalkOutcome {
-        files,
-        seen,
+        files: results.into_inner().unwrap().into_values().collect(),
+        seen: seen.into_inner().unwrap().into_iter().collect(),
         cancelled: cancelled.into_inner(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fs::NativeFs;
+    use crate::pattern;
+
+    #[test]
+    fn nested_roots_yield_each_file_once() {
+        let t = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(t.path()).unwrap();
+        let inner = root.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::write(root.join("a.ts"), "// TODO outer\n").unwrap();
+        std::fs::write(inner.join("b.ts"), "// TODO inner\n").unwrap();
+        std::fs::write(inner.join("c.ts"), "no tags\n").unwrap();
+        let cfg = CoreConfig::default();
+        let p = pattern::build(&cfg).unwrap();
+        let out = walk_and_scan(
+            &cfg,
+            &[root.clone(), inner.clone()],
+            &p,
+            Arc::new(NativeFs),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let files: Vec<_> = out.files.iter().map(|f| f.path.clone()).collect();
+        assert_eq!(files, vec![root.join("a.ts"), inner.join("b.ts")]);
+        assert_eq!(
+            out.seen,
+            vec![root.join("a.ts"), inner.join("b.ts"), inner.join("c.ts")]
+        );
+    }
 }
