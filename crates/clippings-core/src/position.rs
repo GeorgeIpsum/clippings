@@ -36,10 +36,6 @@ impl<'a> LineIndex<'a> {
         }
     }
 
-    pub fn line_start(&self, line: usize) -> usize {
-        self.starts[line]
-    }
-
     /// Byte range of a line's content, without its `\n` or `\r\n`.
     pub fn line_range(&self, line: usize) -> (usize, usize) {
         let start = self.starts[line];
@@ -48,11 +44,6 @@ impl<'a> LineIndex<'a> {
             end -= 1;
         }
         (start, end)
-    }
-
-    /// Number of lines (a text ending in a newline has an empty last line).
-    pub fn line_count(&self) -> usize {
-        self.starts.len()
     }
 
     /// Byte offset of a position, clamped to its line. The inverse of `position`.

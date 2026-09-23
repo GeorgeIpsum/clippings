@@ -2,7 +2,7 @@
 //! `cargo test --release -p clippings-core --test perf -- --ignored --nocapture`.
 
 use clippings_core::decorations::decorate;
-use clippings_core::index::{EffectiveFile, Source, SourcedTodo};
+use clippings_core::index::{EffectiveFile, SourcedTodo};
 use clippings_core::pattern;
 use clippings_core::scanner::scan_text;
 use clippings_core::settings::Settings;
@@ -34,7 +34,6 @@ fn view_rebuild_and_diff_with_10k_todos_under_15ms() {
         .map(|path| EffectiveFile {
             path: Some(path.as_path()),
             uri: None,
-            source: Source::Disk,
             todos: todos
                 .iter()
                 .map(|todo| SourcedTodo {

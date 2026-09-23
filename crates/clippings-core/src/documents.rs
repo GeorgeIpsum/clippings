@@ -54,9 +54,6 @@ impl Documents {
     pub fn remove(&mut self, uri: &str) -> Option<Document> {
         self.docs.remove(uri)
     }
-    pub fn iter(&self) -> impl Iterator<Item = &Document> {
-        self.docs.values()
-    }
     pub fn uris(&self) -> Vec<String> {
         self.docs.keys().cloned().collect()
     }

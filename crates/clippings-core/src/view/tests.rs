@@ -1,7 +1,7 @@
 use super::delta::delta;
 use super::export::{export_path, export_value, treeify};
 use super::render::{NodeCommand, View};
-use crate::index::{EffectiveFile, Source, SourcedTodo};
+use crate::index::{EffectiveFile, SourcedTodo};
 use crate::model::{ExtraLine, Todo};
 use crate::position::Position;
 use crate::settings::{Attributes, RevealBehaviour, Settings};
@@ -46,7 +46,6 @@ impl Fixture {
             .map(|(p, t)| EffectiveFile {
                 path: Some(p.as_path()),
                 uri: None,
-                source: Source::Disk,
                 todos: t
                     .iter()
                     .map(|todo| SourcedTodo {
@@ -498,7 +497,6 @@ fn notebook_cells_with_todos_at_the_same_position_both_appear() {
     let files = vec![EffectiveFile {
         path: Some(std::path::Path::new("/w/nb.ipynb")),
         uri: None,
-        source: Source::Buffers,
         todos: vec![
             SourcedTodo {
                 buffer_uri: Some(cells[0]),

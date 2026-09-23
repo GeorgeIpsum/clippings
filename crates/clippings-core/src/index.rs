@@ -33,12 +33,6 @@ pub struct SourcedTodo<'a> {
     pub todo: &'a Todo,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Source {
-    Disk,
-    Buffers,
-}
-
 /// One file or pathless document as the tree shows it, borrowed from the index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectiveFile<'a> {
@@ -46,7 +40,6 @@ pub struct EffectiveFile<'a> {
     pub path: Option<&'a Path>,
     /// Set for documents without a path.
     pub uri: Option<&'a str>,
-    pub source: Source,
     pub todos: Vec<SourcedTodo<'a>>,
 }
 
@@ -185,7 +178,6 @@ impl Index {
             out.push(EffectiveFile {
                 path: Some(path),
                 uri: None,
-                source: Source::Disk,
                 todos: todos
                     .iter()
                     .map(|todo| SourcedTodo {
@@ -201,7 +193,6 @@ impl Index {
                 out.push(EffectiveFile {
                     path: Some(path),
                     uri: None,
-                    source: Source::Buffers,
                     todos,
                 });
             }
@@ -210,7 +201,6 @@ impl Index {
             out.push(EffectiveFile {
                 path: None,
                 uri: Some(&b.uri),
-                source: Source::Buffers,
                 todos: b.sourced().collect(),
             });
         }

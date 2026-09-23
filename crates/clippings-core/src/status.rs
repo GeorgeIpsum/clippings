@@ -146,7 +146,7 @@ pub fn summarize(view: &View, settings: &Settings, active_file: Option<&Path>) -
 mod tests {
     use super::*;
     use crate::config::ScanMode;
-    use crate::index::{EffectiveFile, Source, SourcedTodo};
+    use crate::index::{EffectiveFile, SourcedTodo};
     use crate::model::Todo;
     use crate::position::Position;
     use crate::settings::{Attributes, StatusBarMode};
@@ -176,7 +176,6 @@ mod tests {
             EffectiveFile {
                 path: Some(Path::new("/w/a.ts")),
                 uri: None,
-                source: Source::Disk,
                 todos: a
                     .iter()
                     .map(|t| SourcedTodo {
@@ -188,7 +187,6 @@ mod tests {
             EffectiveFile {
                 path: Some(Path::new("/w/b.ts")),
                 uri: None,
-                source: Source::Disk,
                 todos: b
                     .iter()
                     .map(|t| SourcedTodo {
