@@ -3,7 +3,7 @@
 
 use crate::config::ScanMode;
 use crate::model::{FileResult, Todo};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,10 +18,19 @@ pub struct BufferEntry {
 
 /// A todo with the document it came from: `None` for disk results, the
 /// buffer URI (for example a notebook cell) for buffer results.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SourcedTodo {
-    pub buffer_uri: Option<String>,
-    pub todo: Todo,
+impl BufferEntry {
+    fn sourced(&self) -> impl Iterator<Item = SourcedTodo<'_>> {
+        self.todos.iter().map(|todo| SourcedTodo {
+            buffer_uri: Some(&self.uri),
+            todo,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourcedTodo<'a> {
+    pub buffer_uri: Option<&'a str>,
+    pub todo: &'a Todo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,14 +39,15 @@ pub enum Source {
     Buffers,
 }
 
+/// One file or pathless document as the tree shows it, borrowed from the index.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EffectiveFile {
+pub struct EffectiveFile<'a> {
     /// File path, or `None` for a document without one.
-    pub path: Option<PathBuf>,
+    pub path: Option<&'a Path>,
     /// Set for documents without a path.
-    pub uri: Option<String>,
+    pub uri: Option<&'a str>,
     pub source: Source,
-    pub todos: Vec<SourcedTodo>,
+    pub todos: Vec<SourcedTodo<'a>>,
 }
 
 pub struct EffectiveContext<'a> {
@@ -76,7 +86,9 @@ impl Index {
     }
 
     /// Applies a walk: replaces entries for scanned files and, when the walk
-    /// completed, removes entries under `roots` that it did not see. `seen` may be in any order.
+    /// completed, removes entries under `roots` that it did not see. Paths in
+    /// `files` count as seen, so `seen` need only list the files without
+    /// todos (listing them all is fine too). `seen` may be in any order.
     pub fn apply_walk(
         &mut self,
         roots: &[PathBuf],
@@ -87,12 +99,18 @@ impl Index {
         for p in seen {
             self.disk.remove(p);
         }
+        let mut seen_set: HashSet<PathBuf> = if complete {
+            seen.iter().cloned().collect()
+        } else {
+            HashSet::new()
+        };
         for f in files {
+            if complete {
+                seen_set.insert(f.path.clone());
+            }
             self.disk.insert(f.path, f.todos);
         }
         if complete {
-            let seen_set: std::collections::HashSet<&Path> =
-                seen.iter().map(PathBuf::as_path).collect();
             self.disk.retain(|p, _| {
                 !roots.iter().any(|r| p.starts_with(r)) || seen_set.contains(p.as_path())
             });
@@ -132,43 +150,37 @@ impl Index {
     }
 
     /// What the tree shows, ordered by path then URI.
-    pub fn effective(&self, ctx: &EffectiveContext) -> Vec<EffectiveFile> {
-        let mut by_path: BTreeMap<PathBuf, Vec<&BufferEntry>> = BTreeMap::new();
+    pub fn effective(&self, ctx: &EffectiveContext) -> Vec<EffectiveFile<'_>> {
+        let mut by_path: BTreeMap<&Path, Vec<&BufferEntry>> = BTreeMap::new();
         let mut pathless: Vec<&BufferEntry> = Vec::new();
         for b in self.buffers.values().filter(|b| self.buffer_feeds(b, ctx)) {
             match &b.path {
-                Some(p) => by_path.entry(p.clone()).or_default().push(b),
+                Some(p) => by_path.entry(p.as_path()).or_default().push(b),
                 None => pathless.push(b),
             }
         }
         let mut out: Vec<EffectiveFile> = Vec::new();
         for (path, todos) in &self.disk {
-            if by_path.contains_key(path) || !ctx.walked_roots.iter().any(|r| path.starts_with(r)) {
+            if by_path.contains_key(path.as_path())
+                || !ctx.walked_roots.iter().any(|r| path.starts_with(r))
+            {
                 continue;
             }
             out.push(EffectiveFile {
-                path: Some(path.clone()),
+                path: Some(path),
                 uri: None,
                 source: Source::Disk,
                 todos: todos
                     .iter()
-                    .map(|t| SourcedTodo {
+                    .map(|todo| SourcedTodo {
                         buffer_uri: None,
-                        todo: t.clone(),
+                        todo,
                     })
                     .collect(),
             });
         }
         for (path, buffers) in by_path {
-            let todos: Vec<SourcedTodo> = buffers
-                .iter()
-                .flat_map(|b| {
-                    b.todos.iter().map(|t| SourcedTodo {
-                        buffer_uri: Some(b.uri.clone()),
-                        todo: t.clone(),
-                    })
-                })
-                .collect();
+            let todos: Vec<SourcedTodo> = buffers.iter().flat_map(|b| b.sourced()).collect();
             if !todos.is_empty() {
                 out.push(EffectiveFile {
                     path: Some(path),
@@ -181,19 +193,12 @@ impl Index {
         for b in pathless.into_iter().filter(|b| !b.todos.is_empty()) {
             out.push(EffectiveFile {
                 path: None,
-                uri: Some(b.uri.clone()),
+                uri: Some(&b.uri),
                 source: Source::Buffers,
-                todos: b
-                    .todos
-                    .iter()
-                    .map(|t| SourcedTodo {
-                        buffer_uri: Some(b.uri.clone()),
-                        todo: t.clone(),
-                    })
-                    .collect(),
+                todos: b.sourced().collect(),
             });
         }
-        out.sort_by(|a, b| (&a.path, &a.uri).cmp(&(&b.path, &b.uri)));
+        out.sort_by(|a, b| (a.path, a.uri).cmp(&(b.path, b.uri)));
         out
     }
 }
@@ -322,7 +327,7 @@ mod tests {
         let eff = i.effective(&ctx);
         assert_eq!(eff.len(), 1);
         assert_eq!(
-            eff[0].todos[1].buffer_uri.as_deref(),
+            eff[0].todos[1].buffer_uri,
             Some("vscode-notebook-cell:/r/n.ipynb#c2")
         );
         assert_eq!(
@@ -370,6 +375,33 @@ mod tests {
             i.disk(Path::new("/r/d2/b.ts")).is_some(),
             "sibling with shared prefix string survives"
         );
+    }
+
+    #[test]
+    fn apply_walk_counts_files_as_seen() {
+        let mut i = Index::new();
+        let roots = vec![PathBuf::from("/r")];
+        let files = vec![FileResult {
+            path: "/r/a.ts".into(),
+            todos: vec![todo("a")],
+        }];
+        i.apply_walk(&roots, files, &[], true);
+        assert!(i.disk(Path::new("/r/a.ts")).is_some());
+    }
+
+    #[test]
+    fn effective_borrows_from_the_index() {
+        let i = setup();
+        let roots = vec![PathBuf::from("/r")];
+        let ctx = EffectiveContext {
+            mode: ScanMode::WorkspaceOnly,
+            walked_roots: &roots,
+            active_uri: None,
+        };
+        let eff = i.effective(&ctx);
+        let stored = &i.disk(Path::new("/r/a.ts")).unwrap()[0];
+        assert!(std::ptr::eq(eff[0].todos[0].todo, stored));
+        assert_eq!(eff[0].path, Some(Path::new("/r/a.ts")));
     }
 
     #[test]
