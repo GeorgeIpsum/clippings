@@ -55,6 +55,21 @@ pub fn to_file_events(event: &notify::Event) -> Vec<FileEvent> {
         .collect()
 }
 
+/// Forwards one `notify` result. Backends report a queue overflow as an
+/// `Ok` event flagged for rescan with no paths, so that is a failure too.
+fn dispatch(res: notify::Result<notify::Event>, on_events: &impl Fn(Option<Vec<FileEvent>>)) {
+    match res {
+        Ok(e) if e.need_rescan() => on_events(None),
+        Ok(e) => {
+            let events = to_file_events(&e);
+            if !events.is_empty() {
+                on_events(Some(events));
+            }
+        }
+        Err(_) => on_events(None),
+    }
+}
+
 /// A recursive `notify` watcher over the given roots.
 pub struct NotifyWatcher {
     _watcher: notify::RecommendedWatcher,
@@ -67,16 +82,7 @@ impl NotifyWatcher {
         roots: &[PathBuf],
         on_events: impl Fn(Option<Vec<FileEvent>>) + Send + 'static,
     ) -> notify::Result<Self> {
-        let mut watcher =
-            notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
-                Ok(e) => {
-                    let events = to_file_events(&e);
-                    if !events.is_empty() {
-                        on_events(Some(events));
-                    }
-                }
-                Err(_) => on_events(None),
-            })?;
+        let mut watcher = notify::recommended_watcher(move |res| dispatch(res, &on_events))?;
         for r in roots {
             watcher.watch(r, RecursiveMode::Recursive)?;
         }
@@ -117,9 +123,25 @@ mod tests {
         let mut seen = false;
         while std::time::Instant::now() < deadline && !seen {
             if let Ok(Some(events)) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
-                seen = events.iter().any(|e| e.uri == want);
+                seen |= events.iter().any(|e| e.uri == want);
             }
         }
         assert!(seen, "no event for {want}");
+    }
+
+    #[test]
+    fn overflow_and_errors_report_failure() {
+        use notify::event::{EventKind, Flag};
+        use std::cell::RefCell;
+        let got = RefCell::new(Vec::new());
+        let record = |e: Option<Vec<FileEvent>>| got.borrow_mut().push(e.map(|v| v.len()));
+        dispatch(
+            Ok(notify::Event::new(EventKind::Other).set_flag(Flag::Rescan)),
+            &record,
+        );
+        dispatch(Err(notify::Error::generic("boom")), &record);
+        // An event with no paths and no rescan flag is dropped.
+        dispatch(Ok(notify::Event::new(EventKind::Other)), &record);
+        assert_eq!(*got.borrow(), vec![None, None]);
     }
 }
