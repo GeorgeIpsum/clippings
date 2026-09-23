@@ -118,6 +118,7 @@ fn todos_from_lines(
         out.push(Todo {
             start: shift(li.position(s)),
             end: shift(li.position(e)),
+            text_end: shift(li.position(first_end.max(s))),
             tag_start: tag_pos.map(|t| t.0),
             tag_end: tag_pos.map(|t| t.1),
             tag: ex.tag,

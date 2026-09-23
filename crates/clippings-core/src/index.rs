@@ -216,6 +216,7 @@ mod tests {
         Todo {
             start: p,
             end: p,
+            text_end: p,
             tag_start: None,
             tag_end: None,
             tag: "TODO".into(),

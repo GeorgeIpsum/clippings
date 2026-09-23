@@ -179,6 +179,8 @@ pub struct ScanPattern {
     pub tag_re: Option<regex::Regex>,
     pub sub_tag_re: Option<regex::Regex>,
     pub case_sensitive: bool,
+    /// Inline flags for the source: `(?m)` plus `i` and `s` as configured.
+    pub flags: String,
 }
 
 fn grep_builder(cfg: &CoreConfig, multi_line: bool) -> RegexMatcherBuilder {
@@ -201,7 +203,7 @@ fn uses_unsupported_feature(source: &str) -> bool {
     )
 }
 
-fn flag_prefix(cfg: &CoreConfig) -> String {
+pub fn flag_prefix(cfg: &CoreConfig) -> String {
     let mut f = String::from("(?m");
     if !cfg.regex_case_sensitive {
         f.push('i');
@@ -255,6 +257,7 @@ pub fn build(cfg: &CoreConfig) -> Result<ScanPattern, CoreError> {
         tag_re,
         sub_tag_re,
         case_sensitive: cfg.regex_case_sensitive,
+        flags: flag_prefix(cfg),
     })
 }
 

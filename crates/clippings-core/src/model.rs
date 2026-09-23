@@ -18,6 +18,8 @@ pub struct Todo {
     pub start: Position,
     /// End of the regex match.
     pub end: Position,
+    /// End of the line on which the match starts: where "reveal at end of todo" lands.
+    pub text_end: Position,
     /// The tag's range, when a tag was found.
     pub tag_start: Option<Position>,
     pub tag_end: Option<Position>,

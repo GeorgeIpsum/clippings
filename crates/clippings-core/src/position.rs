@@ -8,6 +8,13 @@ pub struct Position {
     pub character: u32,
 }
 
+/// A half-open range of positions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Range {
+    pub start: Position,
+    pub end: Position,
+}
+
 /// Line start offsets of a UTF-8 text.
 pub struct LineIndex<'a> {
     text: &'a [u8],
@@ -41,6 +48,32 @@ impl<'a> LineIndex<'a> {
             end -= 1;
         }
         (start, end)
+    }
+
+    /// Number of lines (a text ending in a newline has an empty last line).
+    pub fn line_count(&self) -> usize {
+        self.starts.len()
+    }
+
+    /// Byte offset of a position, clamped to its line. The inverse of `position`.
+    pub fn offset(&self, pos: Position) -> usize {
+        let line = (pos.line as usize).min(self.starts.len() - 1);
+        let (start, end) = self.line_range(line);
+        let text = String::from_utf8_lossy(&self.text[start..end]);
+        let mut units = 0usize;
+        for (i, ch) in text.char_indices() {
+            if units >= pos.character as usize {
+                return start + i;
+            }
+            units += ch.len_utf16();
+        }
+        end
+    }
+
+    /// Position of the end of a line's content.
+    pub fn line_end(&self, line: usize) -> Position {
+        let line = line.min(self.starts.len() - 1);
+        self.position(self.line_range(line).1)
     }
 
     pub fn position(&self, offset: usize) -> Position {
@@ -110,5 +143,31 @@ mod tests {
         let li = LineIndex::new(t);
         assert_eq!(li.line_range(0), (0, 1));
         assert_eq!(li.line_range(1), (3, 4));
+    }
+
+    #[test]
+    fn offset_inverts_position() {
+        let t = "ééé // TODO\n😀 x".as_bytes();
+        let li = LineIndex::new(t);
+        for off in [0, 2, 4, 7, 11, 14, 16, 20] {
+            if std::str::from_utf8(&t[..off]).is_ok() {
+                assert_eq!(li.offset(li.position(off)), off, "offset {off}");
+            }
+        }
+        assert_eq!(
+            li.line_end(0),
+            Position {
+                line: 0,
+                character: 11
+            }
+        );
+        assert_eq!(
+            li.offset(Position {
+                line: 0,
+                character: 99
+            }),
+            14,
+            "clamped to line end"
+        );
     }
 }

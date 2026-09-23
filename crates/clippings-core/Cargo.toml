@@ -6,6 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+chrono.workspace = true
+crossbeam-channel.workspace = true
 encoding_rs.workspace = true
 fancy-regex.workspace = true
 globset.workspace = true
@@ -13,7 +15,9 @@ grep-matcher.workspace = true
 grep-regex.workspace = true
 grep-searcher.workspace = true
 ignore.workspace = true
+lsp-server.workspace = true
 memchr.workspace = true
+notify.workspace = true
 regex.workspace = true
 regex-syntax.workspace = true
 serde.workspace = true

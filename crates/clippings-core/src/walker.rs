@@ -174,4 +174,22 @@ mod tests {
             vec![root.join("a.ts"), inner.join("b.ts"), inner.join("c.ts")]
         );
     }
+
+    #[test]
+    fn a_cancelled_walk_reports_it_and_scans_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("a.ts"), "// TODO\n").unwrap();
+        let cfg = CoreConfig::default();
+        let p = crate::pattern::build(&cfg).unwrap();
+        let out = walk_and_scan(
+            &cfg,
+            &[t.path().to_path_buf()],
+            &p,
+            Arc::new(NativeFs),
+            &AtomicBool::new(true),
+        )
+        .unwrap();
+        assert!(out.cancelled);
+        assert!(out.files.is_empty() && out.seen.is_empty());
+    }
 }

@@ -16,6 +16,10 @@ expression: report
             "line": 0,
             "character": 5
           },
+          "textEnd": {
+            "line": 0,
+            "character": 34
+          },
           "tagStart": {
             "line": 0,
             "character": 2
@@ -43,6 +47,10 @@ expression: report
           "end": {
             "line": 0,
             "character": 7
+          },
+          "textEnd": {
+            "line": 0,
+            "character": 21
           },
           "tagStart": {
             "line": 0,
@@ -72,6 +80,10 @@ expression: report
             "line": 1,
             "character": 5
           },
+          "textEnd": {
+            "line": 1,
+            "character": 16
+          },
           "tagStart": {
             "line": 1,
             "character": 2
@@ -95,6 +107,10 @@ expression: report
             "line": 2,
             "character": 5
           },
+          "textEnd": {
+            "line": 2,
+            "character": 15
+          },
           "tagStart": {
             "line": 2,
             "character": 2
@@ -117,6 +133,10 @@ expression: report
           "end": {
             "line": 3,
             "character": 9
+          },
+          "textEnd": {
+            "line": 3,
+            "character": 26
           },
           "tagStart": {
             "line": 3,
@@ -146,6 +166,10 @@ expression: report
             "line": 0,
             "character": 5
           },
+          "textEnd": {
+            "line": 0,
+            "character": 28
+          },
           "tagStart": {
             "line": 0,
             "character": 2
@@ -173,6 +197,10 @@ expression: report
           "end": {
             "line": 0,
             "character": 7
+          },
+          "textEnd": {
+            "line": 0,
+            "character": 20
           },
           "tagStart": {
             "line": 0,
@@ -202,6 +230,10 @@ expression: report
             "line": 0,
             "character": 17
           },
+          "textEnd": {
+            "line": 0,
+            "character": 32
+          },
           "tagStart": {
             "line": 0,
             "character": 13
@@ -225,6 +257,10 @@ expression: report
             "line": 1,
             "character": 7
           },
+          "textEnd": {
+            "line": 1,
+            "character": 31
+          },
           "tagStart": {
             "line": 1,
             "character": 3
@@ -247,6 +283,10 @@ expression: report
           "end": {
             "line": 1,
             "character": 19
+          },
+          "textEnd": {
+            "line": 1,
+            "character": 31
           },
           "tagStart": {
             "line": 1,
@@ -276,6 +316,10 @@ expression: report
             "line": 0,
             "character": 7
           },
+          "textEnd": {
+            "line": 0,
+            "character": 2008
+          },
           "tagStart": {
             "line": 0,
             "character": 3
@@ -304,6 +348,10 @@ expression: report
             "line": 0,
             "character": 27
           },
+          "textEnd": {
+            "line": 0,
+            "character": 36
+          },
           "tagStart": {
             "line": 0,
             "character": 23
@@ -326,6 +374,10 @@ expression: report
           "end": {
             "line": 1,
             "character": 8
+          },
+          "textEnd": {
+            "line": 1,
+            "character": 25
           },
           "tagStart": {
             "line": 1,
@@ -355,6 +407,10 @@ expression: report
             "line": 0,
             "character": 7
           },
+          "textEnd": {
+            "line": 0,
+            "character": 18
+          },
           "tagStart": {
             "line": 0,
             "character": 3
@@ -377,6 +433,10 @@ expression: report
           "end": {
             "line": 3,
             "character": 8
+          },
+          "textEnd": {
+            "line": 3,
+            "character": 13
           },
           "tagStart": {
             "line": 3,
@@ -406,6 +466,10 @@ expression: report
             "line": 0,
             "character": 24
           },
+          "textEnd": {
+            "line": 0,
+            "character": 40
+          },
           "tagStart": {
             "line": 0,
             "character": 20
@@ -433,6 +497,10 @@ expression: report
           "end": {
             "line": 0,
             "character": 7
+          },
+          "textEnd": {
+            "line": 0,
+            "character": 43
           },
           "tagStart": {
             "line": 0,
@@ -462,6 +530,10 @@ expression: report
             "line": 0,
             "character": 7
           },
+          "textEnd": {
+            "line": 0,
+            "character": 30
+          },
           "tagStart": {
             "line": 0,
             "character": 3
@@ -490,6 +562,10 @@ expression: report
             "line": 0,
             "character": 4
           },
+          "textEnd": {
+            "line": 0,
+            "character": 23
+          },
           "tagStart": {
             "line": 0,
             "character": 0
@@ -517,6 +593,10 @@ expression: report
           "end": {
             "line": 0,
             "character": 7
+          },
+          "textEnd": {
+            "line": 0,
+            "character": 22
           },
           "tagStart": {
             "line": 0,
