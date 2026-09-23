@@ -101,4 +101,21 @@ mod tests {
         );
         assert_eq!(t, "new");
     }
+
+    #[test]
+    fn surrogate_pairs_crlf_and_out_of_range_edits() {
+        // The emoji is two UTF-16 units: "a" is 0, the emoji 1..3, "b" is 3.
+        let mut t = "a\u{1F600}b\r\nx".to_string();
+        apply_changes(&mut t, &[change(0, 3, 0, 4, "B")]);
+        assert_eq!(t, "a\u{1F600}B\r\nx");
+        // Past the end of a CRLF line clamps before the terminator.
+        apply_changes(&mut t, &[change(0, 99, 0, 99, "!")]);
+        assert_eq!(t, "a\u{1F600}B!\r\nx");
+        // Inside the surrogate pair rounds up to the end of the character.
+        apply_changes(&mut t, &[change(0, 2, 0, 2, "-")]);
+        assert_eq!(t, "a\u{1F600}-B!\r\nx");
+        // A line past the end clamps to the last line; the character stays.
+        apply_changes(&mut t, &[change(9, 0, 9, 0, "Z")]);
+        assert_eq!(t, "a\u{1F600}-B!\r\nZx");
+    }
 }
