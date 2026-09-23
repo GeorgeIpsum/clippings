@@ -151,9 +151,16 @@ impl<'a> Resolver<'a> {
                 }
             }
             Some(name) if name.trim().starts_with("$(") => {
-                let t = name.trim();
+                let rest = name.trim().strip_prefix("$(").unwrap_or_default();
+                // todo-tree's `substr(2, length - 3)`: the last character goes
+                // whether or not it is the closing `)`.
+                let name = rest.strip_suffix(')').unwrap_or_else(|| {
+                    let mut chars = rest.chars();
+                    chars.next_back();
+                    chars.as_str()
+                });
                 IconDescriptor::Codicon {
-                    name: t[2..t.len().saturating_sub(1).max(2)].to_string(),
+                    name: name.to_string(),
                     colour: is_theme(&colour).then_some(colour),
                 }
             }
@@ -497,5 +504,29 @@ mod tests {
                 colour: "green".into()
             }
         );
+    }
+
+    #[test]
+    fn malformed_codicons_do_not_panic() {
+        let codicon = |icon: &str| {
+            let s = settings(|s| {
+                s.highlights.custom_highlight.insert(
+                    "A".into(),
+                    Attributes {
+                        icon: Some(icon.into()),
+                        ..Default::default()
+                    },
+                );
+            });
+            match Resolver::new(&s).icon("A") {
+                IconDescriptor::Codicon { name, .. } => name,
+                other => panic!("{other:?}"),
+            }
+        };
+        // todo-tree drops the last character whether or not it is `)`.
+        assert_eq!(codicon("$(é"), "");
+        assert_eq!(codicon("$(ab"), "a");
+        assert_eq!(codicon("$(éé)"), "éé");
+        assert_eq!(codicon(" $("), "");
     }
 }

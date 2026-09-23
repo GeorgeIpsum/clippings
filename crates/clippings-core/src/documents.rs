@@ -14,6 +14,9 @@ pub struct Document {
     pub text: String,
     /// The last scan of this buffer, used for decorations.
     pub todos: Vec<Todo>,
+    /// The version `todos` was scanned from, if still current for the
+    /// pattern and admission.
+    pub scanned: Option<i32>,
     /// Whether the document passes the open-buffer admission rules and schemes.
     pub admitted: bool,
 }

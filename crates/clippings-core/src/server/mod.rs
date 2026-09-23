@@ -108,6 +108,8 @@ pub struct Server {
     work_tx: Sender<Work>,
     pub work_rx: Receiver<Work>,
     last_status: Option<StatusParams>,
+    /// Why the last `clippings/configure` payload could not be read.
+    config_warning: Option<String>,
 }
 
 fn instance_id() -> String {
@@ -123,6 +125,12 @@ fn guarded<T>(uri: &str, what: &str, f: impl FnOnce() -> T) -> Option<T> {
     catch_unwind(AssertUnwindSafe(f))
         .map_err(|_| tracing::warn!("{what} of {uri} panicked; keeping its previous state"))
         .ok()
+}
+
+/// `now + d`, or `None` when that is past what `Instant` can hold: the
+/// timer never fires.
+fn later(now: Instant, d: Duration) -> Option<Instant> {
+    now.checked_add(d)
 }
 
 fn folder_paths(folders: &[p::WorkspaceFolder]) -> Vec<PathBuf> {
@@ -206,6 +214,7 @@ impl Server {
             work_tx,
             work_rx,
             last_status: None,
+            config_warning: None,
         };
         s.rebuild_scan_state();
         s
@@ -334,8 +343,12 @@ impl Server {
     fn reset_timers(&mut self, now: Instant) {
         let g = self.settings.general.automatic_git_refresh_interval;
         let m = self.settings.general.periodic_refresh_interval;
-        self.git_due = (g > 0).then(|| now + Duration::from_secs(g));
-        self.periodic_due = (m > 0).then(|| now + Duration::from_secs(m * 60));
+        self.git_due = (g > 0)
+            .then(|| later(now, Duration::from_secs(g)))
+            .flatten();
+        self.periodic_due = (m > 0)
+            .then(|| later(now, Duration::from_secs(m.saturating_mul(60))))
+            .flatten();
     }
 
     fn schedule_view(&mut self, now: Instant, whole_tree: bool) {
@@ -370,25 +383,57 @@ impl Server {
     /// `rebuild` does. Returns false when the scan panicked, leaving the
     /// previous state.
     fn rescan_buffer(&mut self, uri: &str, now: Instant, force: bool) -> bool {
-        let Some(doc) = self.docs.get(uri).cloned() else {
+        let Some(doc) = self.docs.get(uri) else {
             return true;
         };
-        let Some(todos) = guarded(uri, "scan", || self.scan_document(&doc)) else {
+        let Some(todos) = guarded(uri, "scan", || self.scan_document(doc)) else {
+            // The kept todos may predate a pattern change: decorations rescan.
+            if let Some(d) = self.docs.get_mut(uri) {
+                d.scanned = None;
+            }
             return false;
         };
-        if let Some(d) = self.docs.get_mut(uri) {
-            d.todos = todos.clone();
-        }
-        if doc.admitted && (force || self.settings.tree.auto_refresh) {
-            self.index.set_buffer(BufferEntry {
+        let entry =
+            (doc.admitted && (force || self.settings.tree.auto_refresh)).then(|| BufferEntry {
                 uri: doc.uri.clone(),
                 path: doc.path.clone(),
                 version: doc.version,
-                todos,
+                todos: todos.clone(),
             });
+        if let Some(d) = self.docs.get_mut(uri) {
+            d.todos = todos;
+            d.scanned = Some(d.version);
+        }
+        if let Some(entry) = entry {
+            self.index.set_buffer(entry);
             self.schedule_view(now, false);
         }
         true
+    }
+
+    /// Recomputes each open document's admission after the rules or roots
+    /// changed. A document whose admission flips gets its decorations
+    /// recomputed, cleared when it is no longer admitted, and leaves the
+    /// tree when it is no longer admitted.
+    fn readmit_documents(&mut self, now: Instant) {
+        for uri in self.docs.uris() {
+            let Some(d) = self.docs.get(&uri) else {
+                continue;
+            };
+            let admitted = self.buffer_admitted(&d.uri, d.path.as_deref());
+            if admitted == d.admitted {
+                continue;
+            }
+            if let Some(d) = self.docs.get_mut(&uri) {
+                d.admitted = admitted;
+                d.scanned = None;
+            }
+            if !admitted {
+                self.index.remove_buffer(&uri);
+                self.schedule_view(now, false);
+            }
+            self.decorations_due.insert(uri, now);
+        }
     }
 
     /// Records that a file event updated `path` (and everything below it),
@@ -549,6 +594,7 @@ impl Server {
         let active_path = self.active_uri.as_deref().and_then(uri_to_path);
         let summary = summarize(&self.view, &self.settings, active_path.as_deref());
         let mut warnings = colour_warnings(&self.settings);
+        warnings.extend(self.config_warning.clone());
         let bad: Vec<String> = [
             &self.settings.tree.label_format,
             &self.settings.tree.tooltip_format,
@@ -579,30 +625,34 @@ impl Server {
     }
 
     fn send_decorations(&mut self, uri: &str) {
-        let Some(doc) = self.docs.get(uri).cloned() else {
+        let Some(doc) = self.docs.get(uri) else {
             return;
         };
         let computed = guarded(uri, "decoration", || {
-            let todos = self.scan_document(&doc);
+            // The buffer scan of this version, when there is one.
+            let fresh = (doc.scanned != Some(doc.version)).then(|| self.scan_document(doc));
             let ranges = if doc.admitted {
-                decorate(doc.text.as_bytes(), &todos, &self.settings, &self.pattern)
+                let todos = fresh.as_deref().unwrap_or(&doc.todos);
+                decorate(doc.text.as_bytes(), todos, &self.settings, &self.pattern)
             } else {
                 BTreeMap::new()
             };
-            (todos, ranges)
+            let resolver = Resolver::new(&self.settings);
+            let new_styles: BTreeMap<String, _> = ranges
+                .keys()
+                .filter(|k| !self.sent_styles.contains(*k))
+                .map(|k| (k.clone(), resolver.style(k)))
+                .collect();
+            (fresh, ranges, new_styles)
         });
-        let Some((todos, ranges)) = computed else {
+        let Some((fresh, ranges, new_styles)) = computed else {
             return;
         };
-        if let Some(d) = self.docs.get_mut(uri) {
+        let (doc_uri, version) = (doc.uri.clone(), doc.version);
+        if let (Some(todos), Some(d)) = (fresh, self.docs.get_mut(uri)) {
             d.todos = todos;
+            d.scanned = Some(d.version);
         }
-        let resolver = Resolver::new(&self.settings);
-        let new_styles: BTreeMap<String, _> = ranges
-            .keys()
-            .filter(|k| !self.sent_styles.contains(*k))
-            .map(|k| (k.clone(), resolver.style(k)))
-            .collect();
         if !new_styles.is_empty() {
             self.sent_styles.extend(new_styles.keys().cloned());
             self.send_notification(
@@ -617,8 +667,8 @@ impl Server {
         self.send_notification(
             method::DECORATIONS,
             p::DecorationsParams {
-                uri: doc.uri,
-                version: doc.version,
+                uri: doc_uri,
+                version,
                 generation: self.style_generation,
                 ranges,
             },
@@ -634,16 +684,7 @@ impl Server {
             if self.walked != old_walked {
                 self.update_watchers();
             }
-            for uri in self.docs.uris() {
-                let admitted = self
-                    .docs
-                    .get(&uri)
-                    .map(|d| self.buffer_admitted(&d.uri, d.path.as_deref()))
-                    .unwrap_or(false);
-                if let Some(d) = self.docs.get_mut(&uri) {
-                    d.admitted = admitted;
-                }
-            }
+            self.readmit_documents(now);
             self.rescan_all(now);
         }
         if changes.styles {
@@ -694,6 +735,7 @@ impl Server {
                     version: item.version,
                     text: item.text,
                     todos: Vec::new(),
+                    scanned: None,
                     admitted,
                 });
                 self.rescan_buffer(&uri, now, false);
@@ -710,10 +752,11 @@ impl Server {
                 apply_changes(&mut doc.text, &params.content_changes);
                 doc.version = params.text_document.version;
                 self.buffer_due.insert(uri.clone(), now + BUFFER_DELAY);
-                self.decorations_due.insert(
-                    uri,
-                    now + Duration::from_millis(self.settings.highlights.highlight_delay),
-                );
+                let delay = Duration::from_millis(self.settings.highlights.highlight_delay);
+                match later(now, delay) {
+                    Some(due) => self.decorations_due.insert(uri, due),
+                    None => self.decorations_due.remove(&uri),
+                };
             }
             method::DID_CLOSE => {
                 let Some(params) = Self::params::<p::DidCloseParams>(n.params) else {
@@ -749,14 +792,26 @@ impl Server {
                 self.folders.extend(folder_paths(&params.event.added));
                 self.rebuild_scan_state();
                 self.update_watchers();
-                self.full_rescan();
+                self.readmit_documents(now);
+                self.rescan_all(now);
                 self.schedule_view(now, true);
             }
-            method::CONFIGURE => {
-                if let Some(s) = Self::params::<Settings>(n.params) {
+            method::CONFIGURE => match serde_json::from_value::<Settings>(n.params) {
+                Ok(s) => {
+                    let cleared = self.config_warning.take().is_some();
                     self.configure(s, now);
+                    if cleared {
+                        self.send_status();
+                    }
                 }
-            }
+                Err(e) => {
+                    tracing::warn!("bad configuration: {e}");
+                    self.config_warning = Some(format!(
+                        "Invalid configuration, keeping the previous one: {e}"
+                    ));
+                    self.send_status();
+                }
+            },
             method::ACTIVE_EDITOR => {
                 let Some(params) = Self::params::<p::ActiveEditorParams>(n.params) else {
                     return;
@@ -932,11 +987,8 @@ impl Server {
         }
         if self.periodic_due.is_some_and(|d| d <= now) {
             self.rescan_all(now);
-            self.periodic_due = Some(
-                now + Duration::from_secs(
-                    self.settings.general.periodic_refresh_interval.max(1) * 60,
-                ),
-            );
+            let minutes = self.settings.general.periodic_refresh_interval.max(1);
+            self.periodic_due = later(now, Duration::from_secs(minutes.saturating_mul(60)));
         }
         if self.git_due.is_some_and(|d| d <= now) {
             for folder in self.folders.clone() {
@@ -948,11 +1000,8 @@ impl Server {
                     });
                 }
             }
-            self.git_due = Some(
-                now + Duration::from_secs(
-                    self.settings.general.automatic_git_refresh_interval.max(1),
-                ),
-            );
+            let seconds = self.settings.general.automatic_git_refresh_interval.max(1);
+            self.git_due = later(now, Duration::from_secs(seconds));
         }
         if self.view_due.is_some_and(|d| d <= now) {
             self.view_due = None;

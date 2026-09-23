@@ -2,9 +2,11 @@
 //! engine selection and the fancy-regex fallback.
 
 use crate::config::CoreConfig;
+use crate::decorations::CaptureRegex;
 use crate::CoreError;
 use grep_matcher::{Match, Matcher, NoCaptures, NoError};
 use grep_regex::{ErrorKind, RegexMatcher, RegexMatcherBuilder};
+use std::sync::OnceLock;
 
 pub const TAGS_TOKEN: &str = "($TAGS)";
 
@@ -207,6 +209,23 @@ pub struct ScanPattern {
     pub case_sensitive: bool,
     /// Inline flags for the source: `(?m)` plus `i` and `s` as configured.
     pub flags: String,
+    /// The pattern with capture groups for `capture-groups:n,m` highlights,
+    /// compiled on first use.
+    captures: OnceLock<Option<CaptureRegex>>,
+}
+
+impl ScanPattern {
+    /// The capture-group regex, compiled once per pattern.
+    pub fn capture_regex(&self) -> Option<&CaptureRegex> {
+        self.captures
+            .get_or_init(|| CaptureRegex::new(self))
+            .as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn capture_regex_cached(&self) -> Option<&CaptureRegex> {
+        self.captures.get().and_then(Option::as_ref)
+    }
 }
 
 fn grep_builder(cfg: &CoreConfig, multi_line: bool) -> RegexMatcherBuilder {
@@ -284,6 +303,7 @@ pub fn build(cfg: &CoreConfig) -> Result<ScanPattern, CoreError> {
         sub_tag_re,
         case_sensitive: cfg.regex_case_sensitive,
         flags: flag_prefix(cfg),
+        captures: OnceLock::new(),
     })
 }
 

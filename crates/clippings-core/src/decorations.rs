@@ -9,6 +9,7 @@ use memchr::memmem;
 use std::collections::BTreeMap;
 
 /// The main pattern with capture groups, for `capture-groups:n,m` highlights.
+#[derive(Clone, Debug)]
 pub enum CaptureRegex {
     Std(regex::bytes::Regex),
     Fancy(fancy_regex::Regex),
@@ -19,7 +20,7 @@ impl CaptureRegex {
         let source = format!("{}{}", p.flags, p.source);
         match regex::bytes::Regex::new(&source) {
             Ok(re) => Some(CaptureRegex::Std(re)),
-            Err(_) => fancy_regex::Regex::new(&source)
+            Err(_) => crate::pattern::fancy_bytes(&source)
                 .ok()
                 .map(CaptureRegex::Fancy),
         }
@@ -37,8 +38,7 @@ impl CaptureRegex {
                 })
             }
             CaptureRegex::Fancy(re) => {
-                let s = std::str::from_utf8(text).ok()?;
-                let c = re.captures_from_pos(s, start).ok()??;
+                let c = re.captures_from_pos(text, start).ok()??;
                 (c.get(0)?.start() == start).then(|| {
                     (0..c.len())
                         .map(|i| c.get(i).map(|m| (m.start(), m.end())))
@@ -63,17 +63,16 @@ pub fn decorate(
     }
     let li = LineIndex::new(text);
     let resolver = Resolver::new(settings);
-    let mut captures: Option<Option<CaptureRegex>> = None;
     for t in todos {
         let s = li.offset(t.start);
         let e = li.offset(t.end).max(s);
-        let raw = String::from_utf8_lossy(&text[s..e]).into_owned();
         let (key, tag_range) = match (t.tag.is_empty(), t.tag_start, t.tag_end) {
             (false, Some(a), Some(b)) => (
                 settings.key_of(&t.tag).to_string(),
                 Range { start: a, end: b },
             ),
             _ => {
+                let raw = String::from_utf8_lossy(&text[s..e]);
                 // Leading whitespace is valid UTF-8, so its byte length is the
                 // same in `raw` as in `text`: a lossy U+FFFD stops the trim.
                 let lead = raw.len() - raw.trim_start().len();
@@ -148,8 +147,7 @@ pub fn decorate(
                 }
             }
             k if k.starts_with("capture-groups:") => {
-                let re = captures.get_or_insert_with(|| CaptureRegex::new(pattern));
-                if let Some(groups) = re.as_ref().and_then(|re| re.groups_at(text, s)) {
+                if let Some(groups) = pattern.capture_regex().and_then(|re| re.groups_at(text, s)) {
                     for n in k["capture-groups:".len()..]
                         .split(',')
                         .filter_map(|n| n.trim().parse::<usize>().ok())
@@ -382,5 +380,24 @@ mod tests {
         let p = build(&s.core()).unwrap();
         let d = decorate(text, &[todo], &s, &p);
         assert_eq!(d["alice"], vec![r(1, 3, 1, 8)]);
+    }
+
+    #[test]
+    fn fancy_capture_groups_work_on_latin1_and_compile_once() {
+        let mut s = Settings::default();
+        s.regex.regex = r"(?<=// )($TAGS)( \w+)".into();
+        s.highlights.default_highlight = Attributes {
+            kind: Some("capture-groups:2".into()),
+            ..Default::default()
+        };
+        let p = build(&s.core()).unwrap();
+        assert!(p.capture_regex_cached().is_none(), "compiled lazily");
+        let text = b"caf\xe9 // TODO fix\n";
+        let todos = scan_text(&p, text, "a.ts");
+        let d = decorate(text, &todos, &s, &p);
+        assert_eq!(d["TODO"], vec![r(0, 12, 0, 16)]);
+        let first: *const CaptureRegex = p.capture_regex_cached().expect("cached");
+        decorate(text, &todos, &s, &p);
+        assert!(std::ptr::eq(first, p.capture_regex_cached().unwrap()));
     }
 }

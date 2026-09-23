@@ -226,7 +226,7 @@ Changes in paths excluded by the user's `files.watcherExclude` are not reported 
 
 - `general.automaticGitRefreshInterval` in seconds: the server runs `git rev-parse HEAD` per workspace folder with `std::process::Command`, never a shell, with at most one in flight per folder. A changed HEAD triggers a full rescan. Nested repositories are never polled. Zero disables it, which is the default.
 - `general.periodicRefreshInterval` in minutes: a full rescan on that interval. Zero disables it, which is the default.
-- With both at zero the server has no timers.
+- With both at zero the server has no timers. An interval too long for the platform clock to represent never fires.
 
 ### 5.12 View model
 
@@ -289,7 +289,7 @@ Top-level nodes have no parent prefix. A node promoted by root compaction keeps 
 
 ### 5.13 Decorations
 
-Decorations are computed for each open document whose scheme is in `general.schemes` and that passes the open-buffer admission rules, when `highlights.enabled` is true.
+Decorations are computed for each open document whose scheme is in `general.schemes` and that passes the open-buffer admission rules, when `highlights.enabled` is true. When a configuration or workspace-folder change flips a document's admission, its decorations are recomputed; a document no longer admitted gets empty ranges, which clears them, and its buffer result leaves the tree.
 
 **Key** per match: the group name if the tag is grouped, else the tag. A sub-tag gets its own key. A match without a tag uses its trimmed match text as the key, and its range (the "tag" row below) starts after the match's leading whitespace and ends at the raw match end; trailing whitespace is not trimmed, as in todo-tree.
 
@@ -321,7 +321,7 @@ The server computes:
 - The activity bar badge: the workspace total excluding `hideFromActivityBar` tags when `general.showActivityBarBadge` is true, else zero, with tooltip `N todos`.
 - The view title: `Tree`, `Flat` or `Tags`, with ` (N)` appended when `tree.showCountsInTree` is true and N is positive. N is the current-file total in `current file` status bar mode, else the workspace total.
 - `hasSubTags`: whether any node in the current view has a sub-tag. `isEmpty`: whether the view has no todo nodes.
-- Scanning, interrupted and `needsScan` state, the error state, configuration warnings for invalid colours and label placeholders, and the server instance ID. Icon-name validation happens in the extension, which owns the octicon set.
+- Scanning, interrupted and `needsScan` state, the error state, configuration warnings for invalid colours and label placeholders and for a `clippings/configure` payload that cannot be read, which leaves the previous configuration in place until a readable one arrives, and the server instance ID. Icon-name validation happens in the extension, which owns the octicon set.
 
 ### 5.15 Navigation and export
 

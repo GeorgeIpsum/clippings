@@ -577,3 +577,144 @@ fn without_auto_refresh_a_watcher_overflow_does_not_rescan() {
     assert_eq!(s.scan_generation, 1);
     assert_eq!(s.index.buffer(&uri).unwrap().todos[0].after, "edited");
 }
+
+/// The decorations sent for `uri`, as their range keys, oldest first.
+fn decorations(rx: &Receiver<Message>, uri: &str) -> Vec<Vec<String>> {
+    rx.try_iter()
+        .filter_map(|m| match m {
+            Message::Notification(n)
+                if n.method == method::DECORATIONS && n.params["uri"] == uri =>
+            {
+                Some(
+                    n.params["ranges"]
+                        .as_object()
+                        .unwrap()
+                        .keys()
+                        .cloned()
+                        .collect(),
+                )
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn huge_timer_intervals_do_not_panic() {
+    let (_t, root) = workspace();
+    let (mut s, _rx) = server(
+        &root,
+        json!({
+            "general": {
+                "automaticGitRefreshInterval": u64::MAX,
+                "periodicRefreshInterval": u64::MAX,
+            },
+            "highlights": { "highlightDelay": u64::MAX },
+            "tree": { "scanAtStartup": false },
+        }),
+        Arc::new(NativeFs),
+    );
+    let now = Instant::now();
+    s.start(now);
+    let uri = file_uri(&root.join("open.ts"));
+    open(&mut s, &uri, "// TODO opened\n", now);
+    s.handle_notification(
+        notification(
+            method::DID_CHANGE,
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": "// TODO two\n" }] }),
+        ),
+        now,
+    );
+    // Both timers due now: each re-arms with the huge interval.
+    s.git_due = Some(now);
+    s.periodic_due = Some(now);
+    s.tick(now);
+    assert!(s.git_due.is_none() && s.periodic_due.is_none());
+}
+
+#[test]
+fn a_document_whose_admission_flips_gets_its_decorations_recomputed() {
+    let (_t, root) = workspace();
+    let (mut s, rx) = server(
+        &root,
+        json!({ "highlights": { "highlightDelay": 0 }, "filtering": { "excludeGlobs": ["src/**"] } }),
+        Arc::new(NativeFs),
+    );
+    let now = Instant::now();
+    let uri = file_uri(&root.join("src/open.ts"));
+    open(&mut s, &uri, "// TODO opened\n", now);
+    s.tick(now);
+    assert_eq!(decorations(&rx, &uri), vec![Vec::<String>::new()]);
+    assert!(s.index.buffer(&uri).is_none());
+
+    let folders = |added: &Path, removed: &Path| {
+        let f = |p: &Path| json!([{ "uri": file_uri(p), "name": "w" }]);
+        notification(
+            method::DID_CHANGE_WORKSPACE_FOLDERS,
+            json!({ "event": { "added": f(added), "removed": f(removed) } }),
+        )
+    };
+    // Under a new folder the relative glob no longer matches.
+    s.handle_notification(folders(&root.join("src"), &root), now);
+    s.tick(now);
+    assert_eq!(decorations(&rx, &uri), vec![vec!["TODO".to_string()]]);
+    assert!(s.index.buffer(&uri).is_some());
+
+    // Back under the root it is excluded again: decorations are cleared
+    // and it leaves the tree.
+    s.handle_notification(folders(&root, &root.join("src")), now);
+    s.tick(now);
+    assert_eq!(decorations(&rx, &uri), vec![Vec::<String>::new()]);
+    assert!(s.index.buffer(&uri).is_none());
+}
+
+#[test]
+fn decorations_reuse_the_buffer_scan_of_the_same_version() {
+    let (_t, root) = workspace();
+    let (mut s, rx) = server(
+        &root,
+        json!({ "highlights": { "highlightDelay": 0 } }),
+        Arc::new(NativeFs),
+    );
+    let now = Instant::now();
+    let uri = file_uri(&root.join("open.ts"));
+    open(&mut s, &uri, "// TODO opened\n", now);
+    s.tick(now);
+    assert_eq!(decorations(&rx, &uri), vec![vec!["TODO".to_string()]]);
+    // Same version: the decorations come from the stored todos, not a rescan.
+    s.docs.get_mut(&uri).unwrap().todos.clear();
+    s.decorations_due.insert(uri.clone(), now);
+    s.tick(now);
+    assert_eq!(decorations(&rx, &uri), vec![Vec::<String>::new()]);
+}
+
+#[test]
+fn an_unreadable_configuration_is_a_status_warning() {
+    let (_t, root) = workspace();
+    let (mut s, _rx) = server(&root, json!({}), Arc::new(NativeFs));
+    let now = Instant::now();
+    s.handle_notification(
+        notification(
+            method::CONFIGURE,
+            json!({ "tree": { "autoRefresh": "yes" } }),
+        ),
+        now,
+    );
+    let warnings = s.last_status.as_ref().unwrap().warnings.clone();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("autoRefresh") || w.contains("invalid type")),
+        "{warnings:?}"
+    );
+    assert!(
+        s.settings.tree.auto_refresh,
+        "the previous configuration stays"
+    );
+
+    s.handle_notification(notification(method::CONFIGURE, json!({})), now);
+    assert_eq!(
+        s.last_status.as_ref().unwrap().warnings,
+        Vec::<String>::new()
+    );
+}
