@@ -3,10 +3,36 @@ use clap::{Parser, Subcommand};
 use clippings_core::config::CoreConfig;
 use clippings_core::fs::NativeFs;
 use clippings_core::report::scan_report;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 mod watch;
+
+/// Writes `line` to `out`, terminated with a newline. Standard Unix
+/// behaviour for a pipe whose reader has gone away (`head`, a killed
+/// watcher client): stop quietly with exit code 0 instead of reporting a
+/// broken pipe as an error.
+fn write_line(out: &mut impl Write, line: &str) -> Result<()> {
+    if let Err(e) = writeln!(out, "{line}") {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        return Err(e.into());
+    }
+    Ok(())
+}
+
+/// Flushes `out`, with the same broken-pipe handling as [`write_line`].
+fn flush(out: &mut impl Write) -> Result<()> {
+    if let Err(e) = out.flush() {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        return Err(e.into());
+    }
+    Ok(())
+}
 
 #[derive(Parser)]
 #[command(name = "clippings", version, about = "Fast TODO scanning for VS Code")]
@@ -87,22 +113,27 @@ fn main() -> Result<()> {
             let cfg = load_config(config, hidden, no_ignore)?;
             let roots = canonical(&roots)?;
             let report = scan_report(&roots, &cfg, Arc::new(NativeFs))?;
+            let mut out = std::io::stdout();
             if json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
+                write_line(&mut out, &serde_json::to_string_pretty(&report)?)?;
             } else {
                 for f in &report.files {
                     for t in &f.todos {
-                        println!(
-                            "{}:{}:{}: {} {}",
-                            f.path,
-                            t.start.line + 1,
-                            t.start.character + 1,
-                            t.tag,
-                            t.after
-                        );
+                        write_line(
+                            &mut out,
+                            &format!(
+                                "{}:{}:{}: {} {}",
+                                f.path,
+                                t.start.line + 1,
+                                t.start.character + 1,
+                                t.tag,
+                                t.after
+                            ),
+                        )?;
                     }
                 }
             }
+            flush(&mut out)?;
         }
         Command::Probe => {
             let info = serde_json::json!({
