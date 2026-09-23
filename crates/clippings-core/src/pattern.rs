@@ -96,6 +96,9 @@ pub(crate) fn fancy_bytes(source: &str) -> Result<fancy_regex::Regex, fancy_rege
 #[derive(Clone, Debug)]
 pub struct FancyMatcher {
     re: fancy_regex::Regex,
+    /// A multi-line pattern must not report a line terminator, or the
+    /// searcher falls back to line mode and drops cross-line matches.
+    multi_line: bool,
 }
 
 impl FancyMatcher {
@@ -148,7 +151,7 @@ impl Matcher for FancyMatcher {
     }
 
     fn line_terminator(&self) -> Option<grep_matcher::LineTerminator> {
-        Some(grep_matcher::LineTerminator::byte(b'\n'))
+        (!self.multi_line).then(|| grep_matcher::LineTerminator::byte(b'\n'))
     }
 }
 
@@ -268,7 +271,10 @@ pub fn build(cfg: &CoreConfig) -> Result<ScanPattern, CoreError> {
     let (matcher, engine) = if uses_unsupported_feature(&source) {
         let re = fancy_bytes(&format!("{}{}", flag_prefix(cfg), source))
             .map_err(|e| CoreError::InvalidRegex(format!("regex: {e}")))?;
-        (PatternMatcher::Fancy(FancyMatcher { re }), Engine::Fancy)
+        (
+            PatternMatcher::Fancy(FancyMatcher { re, multi_line }),
+            Engine::Fancy,
+        )
     } else {
         let built = match grep_builder(cfg, multi_line).build(&source) {
             Err(e) if !multi_line && matches!(e.kind(), ErrorKind::NotAllowed(_)) => {

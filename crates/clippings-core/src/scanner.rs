@@ -347,6 +347,23 @@ mod tests {
     }
 
     #[test]
+    fn fancy_multi_line_match_reaches_across_lines() {
+        // Look-behind needs fancy-regex; the match spans three lines.
+        let cfg = CoreConfig {
+            regex: r"(?<=// )($TAGS).*(\n\s*//\s{2,}.*)*".into(),
+            ..Default::default()
+        };
+        let t = scan(
+            cfg,
+            "// TODO first\n//   second\n//   third\ncode\n",
+            "a.ts",
+        );
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].end.line, 2);
+        assert_eq!(t[0].extra_lines.len(), 2);
+    }
+
+    #[test]
     fn adjacent_multi_line_matches_stay_separate() {
         let cfg = CoreConfig {
             regex: r"(//)\s*($TAGS).*(\n\s*//\s{2,}.*)*".into(),
