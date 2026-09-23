@@ -3,11 +3,11 @@
 //! by `clippings watch`.
 
 use crate::protocol::{FileEvent, FILE_CHANGED, FILE_CREATED, FILE_DELETED};
-use crate::uri::file_uri;
+use crate::uri::{file_uri, uri_to_path};
 use notify::event::{EventKind, ModifyKind};
 use notify::{RecursiveMode, Watcher};
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const REGISTRATION_ID: &str = "clippings-watchers";
 
@@ -53,6 +53,45 @@ pub fn to_file_events(event: &notify::Event) -> Vec<FileEvent> {
             kind: kind(p),
         })
         .collect()
+}
+
+/// Each root paired with its canonical path, for roots reached through a
+/// symlink. Backends such as FSEvents report canonical paths.
+pub fn canonical_roots(roots: &[PathBuf]) -> Vec<(PathBuf, PathBuf)> {
+    roots
+        .iter()
+        .filter_map(|r| {
+            let canonical = std::fs::canonicalize(r).ok()?;
+            (canonical != *r).then(|| (canonical, r.clone()))
+        })
+        .collect()
+}
+
+/// Rewrites event paths under a root's canonical path to lie under the root
+/// as configured, so they compare equal to the walked roots.
+pub fn rebase_events(events: &mut [FileEvent], roots: &[(PathBuf, PathBuf)]) {
+    for e in events {
+        let Some(path) = uri_to_path(&e.uri) else {
+            continue;
+        };
+        let rebased = roots.iter().find_map(|(canonical, root)| {
+            (!path.starts_with(root))
+                .then(|| path.strip_prefix(canonical).ok())
+                .flatten()
+                .map(|rest| rebase(root, rest))
+        });
+        if let Some(p) = rebased {
+            e.uri = file_uri(&p);
+        }
+    }
+}
+
+fn rebase(root: &Path, rest: &Path) -> PathBuf {
+    if rest.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rest)
+    }
 }
 
 /// Forwards one `notify` result. Backends report a queue overflow as an
@@ -127,6 +166,29 @@ mod tests {
             }
         }
         assert!(seen, "no event for {want}");
+    }
+
+    #[test]
+    fn events_under_a_canonical_root_are_rebased_onto_the_root() {
+        let roots = [(PathBuf::from("/private/w"), PathBuf::from("/w"))];
+        let mut events: Vec<FileEvent> = ["/private/w/a.ts", "/private/w", "/w/b.ts", "/x/c.ts"]
+            .iter()
+            .map(|p| FileEvent {
+                uri: file_uri(Path::new(p)),
+                kind: FILE_CHANGED,
+            })
+            .collect();
+        rebase_events(&mut events, &roots);
+        let uris: Vec<&str> = events.iter().map(|e| e.uri.as_str()).collect();
+        assert_eq!(
+            uris,
+            vec![
+                "file:///w/a.ts",
+                "file:///w",
+                "file:///w/b.ts",
+                "file:///x/c.ts"
+            ]
+        );
     }
 
     #[test]

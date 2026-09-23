@@ -291,7 +291,11 @@ impl Server {
             }
         } else {
             let tx = self.work_tx.clone();
-            self.notify = watch::NotifyWatcher::new(&self.walked, move |e| {
+            let canonical = watch::canonical_roots(&self.walked);
+            self.notify = watch::NotifyWatcher::new(&self.walked, move |mut e| {
+                if let Some(events) = e.as_mut() {
+                    watch::rebase_events(events, &canonical);
+                }
                 let _ = tx.send(Work::Files(e));
             })
             .ok();

@@ -473,3 +473,31 @@ fn two_notebook_cells_with_todos_at_the_same_position_both_show() {
     assert_eq!(todos, vec!["TODO in c1", "TODO in c2"]);
     c.shutdown();
 }
+
+#[cfg(unix)]
+#[test]
+fn notify_reports_changes_under_a_symlinked_root() {
+    let t = tempfile::tempdir().unwrap();
+    let base = dunce::canonicalize(t.path()).unwrap();
+    std::fs::create_dir_all(base.join("real")).unwrap();
+    std::fs::write(base.join("real/b.ts"), "// FIXME beta\n").unwrap();
+    std::os::unix::fs::symlink(base.join("real"), base.join("link")).unwrap();
+    let root = base.join("link");
+    let mut c = Client::start(&root, settings(), false);
+    c.settled_top();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        // Rewritten on every poll, as in the test above.
+        std::fs::write(root.join("c.ts"), "// XXX from disk\n").unwrap();
+        let root_id = c.children(None)["nodes"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        if labels(&c.children(Some(&root_id))).contains(&"c.ts".to_string()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "notify never reported c.ts");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    c.shutdown();
+}
