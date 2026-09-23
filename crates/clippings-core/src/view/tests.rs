@@ -396,6 +396,11 @@ fn tag_grouping_wins_over_sub_tag_grouping() {
         "tag levels present under root when tag grouping wins in tree view, got: {:?}",
         root_children
     );
+    assert!(
+        !root_children.iter().any(|id| id.contains("/s:")),
+        "no sub-tag levels under root when tag grouping wins, got: {:?}",
+        root_children
+    );
 
     // Tags-only view with both groupings: tag grouping wins
     let mut s_tags_both = quiet();
@@ -408,5 +413,9 @@ fn tag_grouping_wins_over_sub_tag_grouping() {
     assert!(
         top.iter().any(|id| id.starts_with("g:")),
         "tag grouping visible at top in tags-only when both set"
+    );
+    assert!(
+        !top.iter().any(|id| id.starts_with("s:")),
+        "no sub-tag levels at top in tags-only when tag grouping wins, got: {top:?}"
     );
 }
