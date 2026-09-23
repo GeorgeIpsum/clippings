@@ -446,21 +446,22 @@ impl Server {
     fn process_events(&mut self, now: Instant) {
         let events = std::mem::take(&mut self.events);
         // One entry per path, in path order so a directory comes before its
-        // contents: whether any event deleted it, and whether it exists
-        // after its last event.
-        let mut paths: BTreeMap<PathBuf, (bool, bool)> = BTreeMap::new();
+        // contents: whether any event deleted it, whether any created it,
+        // and whether it exists after its last event.
+        let mut paths: BTreeMap<PathBuf, (bool, bool, bool)> = BTreeMap::new();
         for e in events {
             let Some(path) = uri_to_path(&e.uri) else {
                 continue;
             };
             let deleted = e.kind == p::FILE_DELETED;
-            let entry = paths.entry(path).or_insert((false, false));
+            let entry = paths.entry(path).or_insert((false, false, false));
             entry.0 |= deleted;
-            entry.1 = !deleted;
+            entry.1 |= e.kind == p::FILE_CREATED;
+            entry.2 = !deleted;
         }
         let mut full = false;
         let mut rewalked: Vec<PathBuf> = Vec::new();
-        for (path, (deleted, exists)) in paths {
+        for (path, (deleted, created, exists)) in paths {
             // Drop events a walk would never reach before any stat, so
             // `node_modules` and the like cost nothing.
             if !self.walked.iter().any(|r| path.starts_with(r))
@@ -491,7 +492,9 @@ impl Server {
                 continue;
             }
             if self.fs.is_dir(&path) {
-                if !self.admission.prunes_dir(&path) {
+                // A Changed directory needs nothing: changes below it arrive
+                // as their own events. Only a created one is rewalked.
+                if created && !self.admission.prunes_dir(&path) {
                     self.rewalk_dir(&path);
                     rewalked.push(path);
                 }

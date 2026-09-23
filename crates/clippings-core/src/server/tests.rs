@@ -21,14 +21,16 @@ pub(super) fn maybe_panic(uri: &str) {
     }
 }
 
-/// A native file system that records every `is_dir` call.
+/// A native file system that records every `is_dir` call and every read.
 #[derive(Default)]
 struct RecordingFs {
     is_dir_calls: Mutex<Vec<PathBuf>>,
+    reads: Mutex<Vec<PathBuf>>,
 }
 
 impl Fs for RecordingFs {
     fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        self.reads.lock().unwrap().push(path.to_path_buf());
         NativeFs.read(path)
     }
     fn len(&self, path: &Path) -> std::io::Result<u64> {
@@ -475,4 +477,33 @@ fn an_ignore_file_under_a_rewalked_dir_still_rescans() {
     );
     assert_eq!(s.scan_generation, 1, "full rescan started");
     assert!(s.scanning);
+}
+
+#[test]
+fn a_changed_event_on_a_directory_does_not_rewalk_it() {
+    let (_t, root) = workspace();
+    let fs = Arc::new(RecordingFs::default());
+    let (mut s, _rx) = server(&root, json!({}), fs.clone());
+    // Written without an event of its own: only a rewalk would find it.
+    write(&root.join("src/unseen.ts"), "// TODO unseen\n");
+    events(
+        &mut s,
+        &[
+            (&root, p::FILE_CHANGED),
+            (&root.join("src"), p::FILE_CHANGED),
+        ],
+    );
+    assert_eq!(afters(&s, &root.join("src/unseen.ts")), None);
+    assert_eq!(
+        *fs.reads.lock().unwrap(),
+        Vec::<PathBuf>::new(),
+        "no file read"
+    );
+
+    // Control: a Created event on the same directory rewalks it.
+    events(&mut s, &[(&root.join("src"), p::FILE_CREATED)]);
+    assert_eq!(
+        afters(&s, &root.join("src/unseen.ts")),
+        Some(vec!["unseen".to_string()])
+    );
 }
