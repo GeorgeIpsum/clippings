@@ -4,7 +4,7 @@
 
 use crate::config::CoreConfig;
 use crate::fs::Fs;
-use crate::globs::{BuiltInExcludes, GlobLayers};
+use crate::globs::{slash_path, BuiltInExcludes, GlobLayers};
 use crate::ignore_rules::IgnoreRules;
 use crate::roots::deepest_root;
 use crate::CoreError;
@@ -32,10 +32,47 @@ pub fn buffer_hidden(path: &Path) -> bool {
     name.starts_with('.') && path.extension().is_none()
 }
 
-pub struct Admission {
-    walked_roots: Vec<PathBuf>,
+/// The directory rules the walker applies in `filter_entry`: layer 1, the
+/// directory pruning of layers 2 to 4, and submodule skipping. The walker
+/// and [`Admission::prunes_dir`] share them, so the server's file-event
+/// filtering prunes exactly what a walk prunes.
+pub struct DirPruning {
     pub(crate) layers: GlobLayers,
     pub(crate) built_in: BuiltInExcludes,
+    ignore_submodules: bool,
+}
+
+impl DirPruning {
+    pub fn new(cfg: &CoreConfig) -> Result<Self, CoreError> {
+        Ok(Self {
+            layers: GlobLayers::new(cfg)?,
+            built_in: BuiltInExcludes::new(&cfg.built_in_excludes),
+            ignore_submodules: cfg.ignore_git_submodules,
+        })
+    }
+
+    /// Whether `dir`, a directory whose deepest scan root is `root`, is
+    /// pruned. `has_git` says whether a directory contains a `.git` entry.
+    pub fn prunes(&self, dir: &Path, root: &Path, has_git: impl FnOnce(&Path) -> bool) -> bool {
+        let rel = rel_components(dir, root);
+        let rel_refs: Vec<&str> = rel.iter().map(String::as_str).collect();
+        let rel_str = dir.strip_prefix(root).ok().map(slash_path);
+        self.built_in.dir_excluded(&rel_refs)
+            || self.layers.dir_pruned(&slash_path(dir), rel_str.as_deref())
+            || (self.ignore_submodules && has_git(dir))
+    }
+
+    /// Include and exclude check for a file below `root`, as the walker does it.
+    pub fn file_allowed(&self, file: &Path, root: &Path) -> bool {
+        let rel_str = file.strip_prefix(root).ok().map(slash_path);
+        self.layers
+            .file_allowed(&slash_path(file), rel_str.as_deref())
+    }
+}
+
+pub struct Admission {
+    walked_roots: Vec<PathBuf>,
+    rules: DirPruning,
     ignore: IgnoreRules,
     include_hidden: bool,
     ignore_submodules: bool,
@@ -51,8 +88,7 @@ impl Admission {
     ) -> Result<Self, CoreError> {
         Ok(Self {
             walked_roots,
-            layers: GlobLayers::new(cfg)?,
-            built_in: BuiltInExcludes::new(&cfg.built_in_excludes),
+            rules: DirPruning::new(cfg)?,
             ignore: IgnoreRules::new(),
             include_hidden: cfg.include_hidden_files,
             ignore_submodules: cfg.ignore_git_submodules,
@@ -70,6 +106,61 @@ impl Admission {
         self.ignore.clear();
     }
 
+    /// Whether `.gitignore`, `.ignore` and `.rgignore` files apply at all.
+    pub fn respects_ignore_files(&self) -> bool {
+        self.respect_ignore_files
+    }
+
+    /// Whether ignore files or the hidden rule keep the entry `entry` (whose
+    /// base name is `name`) out of a walk of `root`. An ignore-file match,
+    /// even a whitelist, takes precedence over the hidden rule, as in the walker.
+    fn ignored_or_hidden(&self, root: &Path, entry: &Path, name: &str, is_dir: bool) -> bool {
+        let m = if self.respect_ignore_files {
+            self.ignore.matched(root, entry, is_dir)
+        } else {
+            Match::None
+        };
+        m.is_ignore() || (m.is_none() && !self.include_hidden && name.starts_with('.'))
+    }
+
+    /// Whether a walk would not descend into `dir`, a directory strictly
+    /// below a walked root, judging `dir` alone and not its ancestors: the
+    /// walker's [`DirPruning`] rules plus the ignore-file and hidden rules.
+    /// False for walked roots and paths outside them.
+    pub fn prunes_dir(&self, dir: &Path) -> bool {
+        let Some(root) = deepest_root(dir, &self.walked_roots) else {
+            return false;
+        };
+        if dir == root {
+            return false;
+        }
+        let name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default();
+        self.rules
+            .prunes(dir, root, |d| self.fs.exists(&d.join(".git")))
+            || self.ignored_or_hidden(root, dir, &name, true)
+    }
+
+    /// Whether a directory strictly between `path`'s walked root and `path`
+    /// is pruned, so a walk never reaches `path`. Checks no property of
+    /// `path` itself, so it needs no stat of `path`.
+    pub fn inside_pruned_dir(&self, path: &Path) -> bool {
+        let Some(root) = deepest_root(path, &self.walked_roots) else {
+            return false;
+        };
+        let mut dir = root.to_path_buf();
+        let rel = rel_components(path, root);
+        for c in rel.iter().take(rel.len().saturating_sub(1)) {
+            dir.push(c);
+            if self.prunes_dir(&dir) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Whether a file on disk may enter the index. Binary detection happens later, in the scanner.
     ///
     /// Known gap: on Windows the walker also treats files and directories
@@ -84,10 +175,10 @@ impl Admission {
             return false;
         }
         let rel_refs: Vec<&str> = rel.iter().map(String::as_str).collect();
-        if self.built_in.file_excluded(&rel_refs) {
+        if self.rules.built_in.file_excluded(&rel_refs) {
             return false;
         }
-        if !self.layers.path_allowed(path, Some(root)) {
+        if !self.rules.layers.path_allowed(path, Some(root)) {
             return false;
         }
         if self.ignore_submodules {
@@ -103,17 +194,11 @@ impl Admission {
             }
         }
         // Ignore files and hidden names, entry by entry from the root down,
-        // as the walker prunes. An ignore-file match, even a whitelist, takes
-        // precedence over the hidden rule, as in the walker.
+        // as the walker prunes.
         let mut entry = root.to_path_buf();
         for (i, c) in rel_refs.iter().enumerate() {
             entry.push(c);
-            let m = if self.respect_ignore_files {
-                self.ignore.matched(root, &entry, i + 1 < rel_refs.len())
-            } else {
-                Match::None
-            };
-            if m.is_ignore() || (m.is_none() && !self.include_hidden && c.starts_with('.')) {
+            if self.ignored_or_hidden(root, &entry, c, i + 1 < rel_refs.len()) {
                 return false;
             }
         }
@@ -125,7 +210,7 @@ impl Admission {
     pub fn admits_buffer(&self, path: Option<&Path>, tree_roots: &[PathBuf]) -> bool {
         let Some(path) = path else { return true };
         let root = deepest_root(path, tree_roots);
-        self.layers.path_allowed(path, root) && !buffer_hidden(path)
+        self.rules.layers.path_allowed(path, root) && !buffer_hidden(path)
     }
 }
 
@@ -194,6 +279,43 @@ mod tests {
         assert!(admission(r, |_| {}).admits_disk(&r.join("vendor/lib/a.c")));
         assert!(!admission(r, |c| c.ignore_git_submodules = true)
             .admits_disk(&r.join("vendor/lib/a.c")));
+    }
+
+    #[test]
+    fn directory_pruning_matches_the_walker() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        fs::create_dir_all(r.join(".git")).unwrap();
+        fs::write(r.join(".gitignore"), "dist/\n").unwrap();
+        fs::create_dir_all(r.join("vendor/lib")).unwrap();
+        fs::write(r.join("vendor/lib/.git"), "gitdir: x").unwrap();
+        let a = admission(r, |c| {
+            c.exclude_globs = vec!["gen/**".into()];
+            c.ignore_git_submodules = true;
+        });
+        for pruned in [
+            "node_modules",
+            "a/node_modules",
+            ".yarn/cache",
+            "gen",
+            "dist",
+            ".github",
+            "vendor/lib",
+        ] {
+            assert!(a.prunes_dir(&r.join(pruned)), "{pruned}");
+        }
+        for kept in ["src", "cache", "vendor", "generated"] {
+            assert!(!a.prunes_dir(&r.join(kept)), "{kept}");
+        }
+        assert!(!a.prunes_dir(r), "a walked root");
+        assert!(!a.prunes_dir(Path::new("/elsewhere/node_modules")));
+        assert!(a.inside_pruned_dir(&r.join("node_modules/pkg/a.js")));
+        assert!(a.inside_pruned_dir(&r.join("gen/x")));
+        assert!(
+            !a.inside_pruned_dir(&r.join("node_modules")),
+            "only ancestors"
+        );
+        assert!(!a.inside_pruned_dir(&r.join("src/a.ts")));
     }
 
     #[test]

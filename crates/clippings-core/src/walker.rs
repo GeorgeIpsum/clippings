@@ -1,9 +1,8 @@
 //! Parallel walk and scan of the walked roots (spec section 5.3 and 5.5).
 
-use crate::admission::rel_components;
+use crate::admission::DirPruning;
 use crate::config::CoreConfig;
 use crate::fs::Fs;
-use crate::globs::{slash_path, BuiltInExcludes, GlobLayers};
 use crate::model::FileResult;
 use crate::pattern::ScanPattern;
 use crate::roots::deepest_root;
@@ -25,9 +24,7 @@ pub struct WalkOutcome {
 
 struct EntryFilter {
     roots: Vec<PathBuf>,
-    layers: GlobLayers,
-    built_in: BuiltInExcludes,
-    ignore_submodules: bool,
+    rules: DirPruning,
 }
 
 impl EntryFilter {
@@ -39,19 +36,10 @@ impl EntryFilter {
         let Some(root) = deepest_root(path, &self.roots) else {
             return true;
         };
-        let rel = rel_components(path, root);
-        let rel_refs: Vec<&str> = rel.iter().map(String::as_str).collect();
-        let rel_str = path.strip_prefix(root).ok().map(slash_path);
-        let abs = slash_path(path);
         if e.file_type().is_some_and(|t| t.is_dir()) {
-            if self.built_in.dir_excluded(&rel_refs)
-                || self.layers.dir_pruned(&abs, rel_str.as_deref())
-            {
-                return false;
-            }
-            return !(self.ignore_submodules && path.join(".git").exists());
+            return !self.rules.prunes(path, root, |d| d.join(".git").exists());
         }
-        self.layers.file_allowed(&abs, rel_str.as_deref())
+        self.rules.file_allowed(path, root)
     }
 }
 
@@ -71,9 +59,7 @@ pub fn walk_and_scan(
     }
     let filter = Arc::new(EntryFilter {
         roots: roots.to_vec(),
-        layers: GlobLayers::new(cfg)?,
-        built_in: BuiltInExcludes::new(&cfg.built_in_excludes),
-        ignore_submodules: cfg.ignore_git_submodules,
+        rules: DirPruning::new(cfg)?,
     });
     let mut builder = WalkBuilder::new(&roots[0]);
     for r in &roots[1..] {
