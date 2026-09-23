@@ -718,3 +718,92 @@ fn an_unreadable_configuration_is_a_status_warning() {
         Vec::<String>::new()
     );
 }
+
+#[test]
+fn stop_scan_cancels_the_running_walk() {
+    let (_t, root) = workspace();
+    let (mut s, _rx) = server(&root, json!({}), Arc::new(NativeFs));
+    let now = Instant::now();
+    s.full_rescan();
+    let flag = s.cancel.clone();
+    assert!(!flag.load(Ordering::Relaxed));
+    s.handle_notification(notification(method::STOP_SCAN, json!({})), now);
+    assert!(
+        flag.load(Ordering::Relaxed),
+        "the running walk's flag is set"
+    );
+
+    // The walk stops early and reports that it was cancelled.
+    let generation = s.scan_generation;
+    s.handle_work(
+        walk(
+            generation,
+            s.walked.clone(),
+            Ok(WalkOutcome {
+                files: vec![],
+                seen: vec![],
+                cancelled: true,
+            }),
+        ),
+        now,
+    );
+    let status = s.last_status.as_ref().unwrap();
+    assert!(!status.scanning && status.interrupted);
+}
+
+/// The `client/registerCapability` and `client/unregisterCapability`
+/// requests sent so far, as (method, watcher base URIs).
+fn watcher_requests(rx: &Receiver<Message>) -> Vec<(String, Vec<String>)> {
+    rx.try_iter()
+        .filter_map(|m| match m {
+            Message::Request(r) => {
+                let bases = r.params["registrations"][0]["registerOptions"]["watchers"]
+                    .as_array()
+                    .map(|w| {
+                        w.iter()
+                            .map(|w| w["globPattern"]["baseUri"].as_str().unwrap().to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some((r.method, bases))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn switching_the_scan_mode_re_registers_watchers() {
+    let (_t, root) = workspace();
+    let params: InitializeParams = serde_json::from_value(json!({
+        "workspaceFolders": [{ "uri": file_uri(&root), "name": "w" }],
+        "capabilities": { "workspace": { "didChangeWatchedFiles": { "dynamicRegistration": true } } },
+        "initializationOptions": { "protocolVersion": 1, "settings": { "tree": { "scanAtStartup": false } } },
+    }))
+    .unwrap();
+    let (tx, rx) = unbounded();
+    let mut s = Server::new(tx, Arc::new(NativeFs), Arc::new(|_| None), &params);
+    let now = Instant::now();
+    s.start(now);
+    let register = |bases: Vec<String>| (method::REGISTER_CAPABILITY.to_string(), bases);
+    let unregister = (method::UNREGISTER_CAPABILITY.to_string(), vec![]);
+    assert_eq!(watcher_requests(&rx), vec![register(vec![file_uri(&root)])]);
+
+    let mode = |s: &mut Server, mode: &str| {
+        s.handle_notification(
+            notification(
+                method::CONFIGURE,
+                json!({ "tree": { "scanAtStartup": false, "scanMode": mode } }),
+            ),
+            now,
+        );
+    };
+    // Nothing is walked in `open files` mode without a root folder.
+    mode(&mut s, "open files");
+    assert_eq!(watcher_requests(&rx), vec![unregister.clone()]);
+    mode(&mut s, "workspace");
+    assert_eq!(watcher_requests(&rx), vec![register(vec![file_uri(&root)])]);
+    // `workspace only` walks the same roots: no re-registration.
+    mode(&mut s, "workspace only");
+    assert_eq!(watcher_requests(&rx), vec![]);
+}
