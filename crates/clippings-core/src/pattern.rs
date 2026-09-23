@@ -82,6 +82,14 @@ impl Lossy {
     }
 }
 
+/// Compiles `source` with fancy-regex over bytes: invalid UTF-8 is searched
+/// in place, and `.` and classes match Unicode scalar values as in grep-regex.
+pub(crate) fn fancy_bytes(source: &str) -> Result<fancy_regex::Regex, fancy_regex::Error> {
+    fancy_regex::RegexBuilder::new(source)
+        .bytes_mode(fancy_regex::BytesMode::UnicodeBytes)
+        .build()
+}
+
 /// fancy-regex behind the `grep_matcher::Matcher` trait.
 #[derive(Clone, Debug)]
 pub struct FancyMatcher {
@@ -89,15 +97,32 @@ pub struct FancyMatcher {
 }
 
 impl FancyMatcher {
-    fn find_str(&self, text: &str, at: usize) -> Option<(usize, usize)> {
-        match self.re.find_from_pos(text, at) {
-            Ok(Some(m)) => Some((m.start(), m.end())),
-            Ok(None) => None,
-            Err(e) => {
-                tracing::debug!("fancy-regex runtime error: {e}");
-                None
+    /// The first match starting in `range`. Look-behind and anchors still
+    /// see the whole haystack.
+    fn search(
+        &self,
+        haystack: &[u8],
+        range: std::ops::Range<usize>,
+    ) -> fancy_regex::Result<Option<(usize, usize)>> {
+        let input = fancy_regex::RegexInput::new(haystack).range(range);
+        Ok(self.re.find_input(input)?.map(|m| (m.start(), m.end())))
+    }
+
+    /// After a runtime error: searches line by line from `at`, each line
+    /// with its own backtrack budget, skipping lines that fail again.
+    fn find_by_line(&self, haystack: &[u8], at: usize) -> Option<(usize, usize)> {
+        let mut start = at;
+        while start <= haystack.len() {
+            let end =
+                memchr::memchr(b'\n', &haystack[start..]).map_or(haystack.len(), |i| start + i);
+            match self.search(haystack, start..end) {
+                Ok(Some(m)) => return Some(m),
+                Ok(None) => {}
+                Err(e) => tracing::debug!("fancy-regex runtime error, skipping a line: {e}"),
             }
+            start = end + 1;
         }
+        None
     }
 }
 
@@ -106,13 +131,14 @@ impl Matcher for FancyMatcher {
     type Error = NoError;
 
     fn find_at(&self, haystack: &[u8], at: usize) -> Result<Option<Match>, NoError> {
-        if let Ok(text) = std::str::from_utf8(haystack) {
-            return Ok(self.find_str(text, at).map(|(s, e)| Match::new(s, e)));
-        }
-        let lossy = Lossy::new(haystack);
-        Ok(self
-            .find_str(&lossy.text, lossy.to_str(at))
-            .map(|(s, e)| Match::new(lossy.to_byte(s), lossy.to_byte(e))))
+        let found = match self.search(haystack, at.min(haystack.len())..haystack.len()) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::debug!("fancy-regex runtime error, searching by line: {e}");
+                self.find_by_line(haystack, at)
+            }
+        };
+        Ok(found.map(|(s, e)| Match::new(s, e)))
     }
 
     fn new_captures(&self) -> Result<NoCaptures, NoError> {
@@ -221,7 +247,7 @@ pub fn build(cfg: &CoreConfig) -> Result<ScanPattern, CoreError> {
     let mut multi_line = cfg.regex.contains(r"\n") || cfg.enable_multi_line;
 
     let (matcher, engine) = if uses_unsupported_feature(&source) {
-        let re = fancy_regex::Regex::new(&format!("{}{}", flag_prefix(cfg), source))
+        let re = fancy_bytes(&format!("{}{}", flag_prefix(cfg), source))
             .map_err(|e| CoreError::InvalidRegex(format!("regex: {e}")))?;
         (PatternMatcher::Fancy(FancyMatcher { re }), Engine::Fancy)
     } else {
@@ -357,6 +383,51 @@ mod tests {
         let hay = b"\xff\xfe // TODO";
         let m = p.matcher.find(hay).unwrap().unwrap();
         assert_eq!(&hay[m.start()..m.end()], b"TODO");
+    }
+
+    #[test]
+    fn fancy_latin1_bytes_match_at_byte_offsets() {
+        let cfg = CoreConfig {
+            regex: r"(?<=// )($TAGS)".into(),
+            ..Default::default()
+        };
+        let p = build(&cfg).unwrap();
+        // Latin-1 `café` then `été`: each `\xe9` is one invalid UTF-8 byte.
+        let hay = b"caf\xe9 // TODO \xe9t\xe9\nx // FIXME\n";
+        let mut found = Vec::new();
+        p.matcher
+            .find_iter(hay, |m| {
+                found.push((m.start(), m.end()));
+                true
+            })
+            .unwrap();
+        assert_eq!(found, vec![(8, 12), (22, 27)]);
+        let t = crate::scanner::scan_text(&p, hay, "a.ts");
+        assert_eq!(
+            t.iter()
+                .map(|t| (t.tag.as_str(), t.start.line, t.start.character))
+                .collect::<Vec<_>>(),
+            vec![("TODO", 0, 8), ("FIXME", 1, 5)]
+        );
+    }
+
+    #[test]
+    fn a_pathological_line_does_not_hide_the_files_other_todos() {
+        // Nested repetition around a look-ahead backtracks exponentially on a
+        // run of `x` with no `y`, past fancy-regex's backtrack limit.
+        let cfg = CoreConfig {
+            regex: r"(?<=// )($TAGS)(?: (?:(?=x)x+)+y)?".into(),
+            ..Default::default()
+        };
+        let p = build(&cfg).unwrap();
+        assert_eq!(p.engine, Engine::Fancy);
+        let bad = format!("// TODO {}\n", "x".repeat(40));
+        let text = format!("// TODO before\n{bad}// FIXME after\n// BUG last\n");
+        let t = crate::scanner::scan_text(&p, text.as_bytes(), "a.ts");
+        let found: Vec<(&str, u32)> = t.iter().map(|t| (t.tag.as_str(), t.start.line)).collect();
+        assert!(found.contains(&("TODO", 0)), "{found:?}");
+        assert!(found.contains(&("FIXME", 2)), "{found:?}");
+        assert!(found.contains(&("BUG", 3)), "{found:?}");
     }
 
     #[test]
