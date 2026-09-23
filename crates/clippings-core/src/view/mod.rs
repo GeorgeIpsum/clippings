@@ -6,6 +6,8 @@
 //! order and compaction. `render` turns the shaped arena into the
 //! `ViewNode`s the client displays.
 
+pub mod delta;
+pub mod export;
 pub mod place;
 pub mod render;
 pub mod shape;

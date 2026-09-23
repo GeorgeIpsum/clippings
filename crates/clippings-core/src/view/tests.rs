@@ -1,3 +1,5 @@
+use super::delta::delta;
+use super::export::{export_path, export_value, treeify};
 use super::render::{NodeCommand, View};
 use crate::index::{EffectiveFile, Source, SourcedTodo};
 use crate::model::{ExtraLine, Todo};
@@ -417,5 +419,67 @@ fn tag_grouping_wins_over_sub_tag_grouping() {
     assert!(
         !top.iter().any(|id| id.starts_with("s:")),
         "no sub-tag levels at top in tags-only when tag grouping wins, got: {top:?}"
+    );
+}
+
+#[test]
+fn deltas_name_parents_to_refresh() {
+    let s = quiet();
+    let old = sample().build(&s);
+    assert!(delta(&old, &old, false).is_empty());
+    let changed = Fixture::new()
+        .file(
+            "/w/src/b.ts",
+            vec![todo(4, "FIXME", "sooner"), todo(1, "TODO", "first")],
+        )
+        .file("/w/src/a.ts", vec![todo(0, "BUG", "")])
+        .file("/w/README.md", vec![todo(2, "TODO", "docs")])
+        .build(&s);
+    assert_eq!(
+        delta(&old, &changed, false),
+        vec![Some("w:file:///w/d:/w/src/f:/w/src/b.ts".to_string())]
+    );
+    let removed = Fixture::new()
+        .file(
+            "/w/src/b.ts",
+            vec![todo(4, "FIXME", "later"), todo(1, "TODO", "first")],
+        )
+        .file("/w/README.md", vec![todo(2, "TODO", "docs")])
+        .build(&s);
+    assert_eq!(
+        delta(&old, &removed, false),
+        vec![Some("w:file:///w/d:/w/src".to_string())]
+    );
+    assert_eq!(delta(&old, &changed, true), vec![None]);
+}
+
+#[test]
+fn export_json_and_treeify() {
+    let mut a = todo(0, "[ ]", "x");
+    a.start = pos(0, 2);
+    let mut b = todo(0, "[ ]", "y");
+    b.start = pos(0, 8);
+    let v = Fixture::new().file("/w/z.md", vec![a, b]).build(&quiet());
+    let value = export_value(&v, false);
+    assert_eq!(
+        value,
+        serde_json::json!({"w": {"z.md": {"line 1:3": "[ ] x", "line 1:9": "[ ] y"}}})
+    );
+
+    let o = serde_json::json!({"src":{"a.ts":{"line 1":"TODO one","line 3":{"TODO":{"second":{},"third":{}}}},"b.ts":{"line 2":"FIXME two"}},"z.md":{"line 1:3":"[ ] x","line 1:9":"[ ] y"}});
+    // Reference output produced by the treeify npm package todo-tree uses.
+    assert_eq!(treeify(&o), "├─ src\n│  ├─ a.ts\n│  │  ├─ line 1: TODO one\n│  │  └─ line 3\n│  │     └─ TODO\n│  │        ├─ second\n│  │        └─ third\n│  └─ b.ts\n│     └─ line 2: FIXME two\n└─ z.md\n   ├─ line 1:3: [ ] x\n   └─ line 1:9: [ ] y\n");
+}
+
+#[test]
+fn export_path_expands_home_env_and_time() {
+    use chrono::TimeZone;
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 9, 23, 14, 5, 0)
+        .unwrap();
+    let env = |n: &str| (n == "PROJ").then(|| "clip".to_string());
+    assert_eq!(
+        export_path("~/${PROJ}-%Y%m%d-%H%M.txt", &env, Some("/home/u"), &now),
+        "/home/u/clip-20260923-1405.txt"
     );
 }
