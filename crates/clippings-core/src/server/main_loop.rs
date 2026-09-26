@@ -40,6 +40,11 @@ pub fn run(connection: Connection, fs: Arc<dyn Fs>, env: Env) -> Result<(), Stri
     connection
         .initialize_finish(id, capabilities())
         .map_err(|e| e.to_string())?;
+    tracing::info!(
+        "clippings {} serving {} workspace folder(s), protocol version {PROTOCOL_VERSION}",
+        env!("CARGO_PKG_VERSION"),
+        params.workspace_folders.as_ref().map_or(0, Vec::len),
+    );
     let mut server = Server::new(connection.sender.clone(), fs, env, &params);
     server.start(Instant::now());
     let work = server.work_rx.clone();

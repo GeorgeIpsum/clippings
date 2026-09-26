@@ -6,6 +6,7 @@ use clippings_core::report::scan_report;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tracing_subscriber::filter::LevelFilter;
 
 mod watch;
 
@@ -101,7 +102,24 @@ fn canonical(roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
         .collect()
 }
 
+/// Sends log records to stderr at the level named by `CLIPPINGS_LOG`
+/// (`error`, `warn`, `info`, `debug`, `trace` or `off`), `info` by default.
+/// The extension shows stderr in its output channel (spec 10.3); stdout
+/// carries JSON-RPC only.
+fn init_logging() {
+    let level = std::env::var("CLIPPINGS_LOG")
+        .ok()
+        .and_then(|v| v.trim().parse::<LevelFilter>().ok())
+        .unwrap_or(LevelFilter::INFO);
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_max_level(level)
+        .with_target(false)
+        .init();
+}
+
 fn main() -> Result<()> {
+    init_logging();
     match Cli::parse().command {
         Command::Scan {
             roots,

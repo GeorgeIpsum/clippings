@@ -191,3 +191,66 @@ fn watch_drops_events_under_a_never_index_directory() {
         "an event for a path under node_modules was printed"
     );
 }
+
+/// Runs a short `clippings lsp` session with `CLIPPINGS_LOG` set to `level`
+/// and an unreadable configuration, and returns what it wrote to stderr.
+fn lsp_stderr(level: &str) -> String {
+    let t = tempfile::tempdir().unwrap();
+    let uri = clippings_core::uri::file_uri(&dunce::canonicalize(t.path()).unwrap());
+    let mut child = bin()
+        .arg("lsp")
+        .env("CLIPPINGS_LOG", level)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut send = |m: Message| m.write(&mut stdin).unwrap();
+    send(
+        Request::new(
+            RequestId::from(1),
+            "initialize".into(),
+            json!({
+                "workspaceFolders": [{ "uri": uri, "name": "w" }],
+                "capabilities": {},
+                "initializationOptions": { "protocolVersion": 1, "settings": {} }
+            }),
+        )
+        .into(),
+    );
+    send(Notification::new("initialized".into(), json!({})).into());
+    send(
+        Notification::new(
+            "clippings/configure".into(),
+            json!({ "general": { "tags": 5 } }),
+        )
+        .into(),
+    );
+    send(Request::new(RequestId::from(2), "shutdown".into(), Value::Null).into());
+    loop {
+        if let Some(Message::Response(r)) = Message::read(&mut stdout).unwrap() {
+            if r.id == RequestId::from(2) {
+                break;
+            }
+        }
+    }
+    send(Notification::new("exit".into(), Value::Null).into());
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stderr).unwrap()
+}
+
+#[test]
+fn lsp_logs_to_stderr_at_the_level_in_clippings_log() {
+    let info = lsp_stderr("info");
+    assert!(info.contains("serving 1 workspace folder(s)"), "{info}");
+    assert!(info.contains("bad configuration"), "{info}");
+    assert!(info.contains("WARN"), "{info}");
+
+    let error = lsp_stderr("error");
+    assert!(!error.contains("serving"), "{error}");
+    assert!(!error.contains("bad configuration"), "{error}");
+}
