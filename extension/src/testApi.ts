@@ -1,0 +1,26 @@
+// What `activate` returns. The `test` hooks let the integration tests
+// observe state VS Code offers no API to read (spec 12.5).
+
+import type * as vscode from 'vscode';
+import type { StatusParams } from './protocol';
+
+export interface ServerHooks {
+  readonly running: boolean;
+  readonly pid: number | undefined;
+  readonly onStatus: vscode.Event<StatusParams>;
+  readonly onRunning: vscode.Event<void>;
+  /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
+  readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
+  status(): StatusParams | undefined;
+}
+
+export interface TestHooks {
+  readonly server: ServerHooks;
+}
+
+export interface ClippingsApi {
+  readonly version: string;
+  readonly test: TestHooks;
+}
