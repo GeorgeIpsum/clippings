@@ -5,9 +5,13 @@ import * as vscode from 'vscode';
 import { needsRestart, registerServerCommands } from './commands/server';
 import { affectsServer, readConfiguration } from './config/read';
 import type { StatusParams } from './protocol';
+import { IconResolver } from './icons/resolver';
 import { ServerConnection } from './server/connection';
 import { ViewStateStore } from './state/viewState';
 import type { ClippingsApi } from './testApi';
+import { NodeCache } from './tree/nodeCache';
+import { TreeProvider } from './tree/provider';
+import { testItem } from './tree/testItems';
 
 let connection: ServerConnection | undefined;
 
@@ -26,11 +30,24 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
   const server = connection;
   let lastStatus: StatusParams | undefined;
 
+  const cache = new NodeCache();
+  const icons = new IconResolver();
+  const provider = new TreeProvider(server, cache, {
+    icons,
+    itemId: (id) => id,
+    expanded: (node) => node.defaultExpanded,
+  });
+  const treeView = vscode.window.createTreeView('clippings-view', { treeDataProvider: provider });
+
   context.subscriptions.push(
     log,
     server,
     ...registerServerCommands(server, log),
     server.onStatus((s) => (lastStatus = s)),
+    provider,
+    treeView,
+    server.onNewInstance(() => provider.reset()),
+    server.onTreeChanged((p) => provider.refresh(p.refresh)),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (needsRestart(e)) void server.restart();
       else if (affectsServer(e)) server.configure(settings());
@@ -55,6 +72,14 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onGaveUp: server.onGaveUp,
         setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
+      },
+      tree: {
+        view: treeView,
+        onDidChange: provider.onDidChangeTreeData,
+        items: async (parent) => {
+          const ids = await provider.getChildren(parent);
+          return ids.map((id) => testItem(id, provider.getTreeItem(id)));
+        },
       },
     },
   };

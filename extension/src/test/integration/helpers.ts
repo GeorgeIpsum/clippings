@@ -79,3 +79,33 @@ export function workspacePath(...parts: string[]): string {
   if (!root) throw new Error('CLIPPINGS_TEST_WORKSPACE is not set');
   return [root, ...parts].join('/');
 }
+
+/**
+ * The tree as indented lines, `label` or `label  description` for status
+ * nodes, walking every node with children down to `depth` levels.
+ */
+export async function outline(api: ClippingsApi, depth = 10, parent?: string, indent = ''): Promise<string[]> {
+  const lines: string[] = [];
+  for (const item of await api.test.tree.items(parent)) {
+    lines.push(indent + (item.label || `(${item.description ?? ''})`));
+    if (item.state !== 'none' && depth > 1) lines.push(...(await outline(api, depth - 1, item.id, indent + '  ')));
+  }
+  return lines;
+}
+
+/** Waits until the tree's outline equals `expected`. */
+export async function treeBecomes(api: ClippingsApi, expected: string[], depth = 10): Promise<void> {
+  let last: string[] = [];
+  try {
+    await waitFor(
+      'the expected tree',
+      async () => {
+        last = await outline(api, depth);
+        return last.join('\n') === expected.join('\n');
+      },
+      [api.test.tree.onDidChange, api.test.server.onStatus],
+    );
+  } catch (err) {
+    throw new Error(`${(err as Error).message}\nexpected:\n${expected.join('\n')}\nactual:\n${last.join('\n')}`);
+  }
+}

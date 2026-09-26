@@ -104,7 +104,9 @@ export class ServerConnection implements vscode.Disposable {
     styles: new vscode.EventEmitter<StylesParams>(),
     decorations: new vscode.EventEmitter<DecorationsParams>(),
     running: new vscode.EventEmitter<void>(),
+    instance: new vscode.EventEmitter<string>(),
   };
+  private instance: string | undefined;
   readonly onStatus = this.emitters.status.event;
   readonly onTreeChanged = this.emitters.treeChanged.event;
   readonly onStyles = this.emitters.styles.event;
@@ -113,6 +115,11 @@ export class ServerConnection implements vscode.Disposable {
   readonly onGaveUp = this.emitters.gaveUp.event;
   /** Fires each time a server, new or restarted, is ready for requests. */
   readonly onRunning = this.emitters.running.event;
+  /**
+   * Fires before the first status of a new server instance, so listeners
+   * discard their node, decoration and style state (spec 6.2).
+   */
+  readonly onNewInstance = this.emitters.instance.event;
 
   private readonly trust: vscode.Disposable;
 
@@ -275,7 +282,14 @@ export class ServerConnection implements vscode.Disposable {
       (params: P) => {
         if (this.session === session) emitter.fire(params);
       };
-    client.onNotification(m.Status, relay(this.emitters.status));
+    client.onNotification(m.Status, (p) => {
+      if (this.session !== session) return;
+      if (p.instance !== this.instance) {
+        this.instance = p.instance;
+        this.emitters.instance.fire(p.instance);
+      }
+      this.emitters.status.fire(p);
+    });
     client.onNotification(m.TreeChanged, relay(this.emitters.treeChanged));
     client.onNotification(m.Styles, relay(this.emitters.styles));
     client.onNotification(m.Decorations, relay(this.emitters.decorations));

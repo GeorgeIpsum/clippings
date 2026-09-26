@@ -2,7 +2,7 @@
 // workspace and uses a fresh user data directory, so tests can edit files
 // and settings without touching the repository or the user's profile.
 import { defineConfig } from '@vscode/test-cli';
-import { cpSync, mkdtempSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -10,6 +10,18 @@ const here = import.meta.dirname;
 const scratch = mkdtempSync(join(tmpdir(), 'clippings-test-'));
 const workspace = join(scratch, 'workspace');
 cpSync(resolve(here, '../tests/fixtures/workspace'), workspace, { recursive: true });
+// Quiet, predictable user settings for the test profile.
+mkdirSync(join(scratch, 'user-data', 'User'), { recursive: true });
+writeFileSync(
+  join(scratch, 'user-data', 'User', 'settings.json'),
+  JSON.stringify({
+    'chat.disableAIFeatures': true,
+    'workbench.startupEditor': 'none',
+    'telemetry.telemetryLevel': 'off',
+    'git.enabled': false,
+    'update.mode': 'none',
+  }),
+);
 const server =
   process.env.CLIPPINGS_SERVER_PATH ?? resolve(here, '../target/debug/clippings' + (process.platform === 'win32' ? '.exe' : ''));
 

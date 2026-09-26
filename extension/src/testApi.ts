@@ -3,6 +3,7 @@
 
 import type * as vscode from 'vscode';
 import type { StatusParams } from './protocol';
+import type { TestItem } from './tree/testItems';
 
 export interface ServerHooks {
   readonly running: boolean;
@@ -16,8 +17,17 @@ export interface ServerHooks {
   status(): StatusParams | undefined;
 }
 
+export interface TreeHooks {
+  readonly view: vscode.TreeView<string>;
+  /** Fires whenever the provider asks VS Code to refetch. */
+  readonly onDidChange: vscode.Event<unknown>;
+  /** The provider's children of `parent` (top level when omitted), as tree items. */
+  items(parent?: string): Promise<TestItem[]>;
+}
+
 export interface TestHooks {
   readonly server: ServerHooks;
+  readonly tree: TreeHooks;
 }
 
 export interface ClippingsApi {
