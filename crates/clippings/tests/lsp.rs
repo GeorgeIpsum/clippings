@@ -254,3 +254,12 @@ fn lsp_logs_to_stderr_at_the_level_in_clippings_log() {
     assert!(!error.contains("serving"), "{error}");
     assert!(!error.contains("bad configuration"), "{error}");
 }
+
+#[test]
+fn lsp_defaults_to_info_for_an_empty_or_unrecognized_clippings_log() {
+    let empty = lsp_stderr("");
+    assert!(empty.contains("serving 1 workspace folder(s)"), "{empty}");
+
+    let bogus = lsp_stderr("bogus");
+    assert!(bogus.contains("serving 1 workspace folder(s)"), "{bogus}");
+}

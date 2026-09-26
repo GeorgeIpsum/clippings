@@ -102,14 +102,30 @@ fn canonical(roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
         .collect()
 }
 
+/// The level named by a `CLIPPINGS_LOG` value: `error`, `warn`, `info`,
+/// `debug`, `trace` or `off`, case-insensitively. Anything else, including
+/// an empty or whitespace-only value, is `info` — note that
+/// `LevelFilter::from_str("")` returns `Ok(ERROR)`, not a default, so this
+/// cannot delegate to `FromStr`.
+fn parse_log_level(v: &str) -> LevelFilter {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "error" => LevelFilter::ERROR,
+        "warn" => LevelFilter::WARN,
+        "info" => LevelFilter::INFO,
+        "debug" => LevelFilter::DEBUG,
+        "trace" => LevelFilter::TRACE,
+        "off" => LevelFilter::OFF,
+        _ => LevelFilter::INFO,
+    }
+}
+
 /// Sends log records to stderr at the level named by `CLIPPINGS_LOG`
 /// (`error`, `warn`, `info`, `debug`, `trace` or `off`), `info` by default.
 /// The extension shows stderr in its output channel (spec 10.3); stdout
 /// carries JSON-RPC only.
 fn init_logging() {
     let level = std::env::var("CLIPPINGS_LOG")
-        .ok()
-        .and_then(|v| v.trim().parse::<LevelFilter>().ok())
+        .map(|v| parse_log_level(&v))
         .unwrap_or(LevelFilter::INFO);
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
