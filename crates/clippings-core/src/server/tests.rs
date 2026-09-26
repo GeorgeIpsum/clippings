@@ -807,3 +807,33 @@ fn switching_the_scan_mode_re_registers_watchers() {
     mode(&mut s, "workspace only");
     assert_eq!(watcher_requests(&rx), vec![]);
 }
+
+/// Methods of the notifications sent so far.
+fn sent_methods(rx: &Receiver<Message>) -> Vec<String> {
+    rx.try_iter()
+        .filter_map(|m| match m {
+            Message::Notification(n) => Some(n.method),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_first_status_precedes_the_first_styles_reset() {
+    for scan_at_startup in [true, false] {
+        let (_t, root) = workspace();
+        let (mut s, rx) = server(
+            &root,
+            json!({ "tree": { "scanAtStartup": scan_at_startup } }),
+            Arc::new(NativeFs),
+        );
+        s.start(Instant::now());
+        let methods = sent_methods(&rx);
+        let status = methods.iter().position(|m| m == method::STATUS);
+        let styles = methods.iter().position(|m| m == method::STYLES);
+        assert!(
+            status.is_some() && styles.is_some() && status < styles,
+            "scanAtStartup {scan_at_startup}: {methods:?}"
+        );
+    }
+}

@@ -234,9 +234,17 @@ impl Server {
             .send(Request::new(id, method.to_string(), params).into());
     }
 
-    /// Called once the client has sent `initialized`.
+    /// Called once the client has sent `initialized`. The first status goes
+    /// out before the first styles reset: a client discards its style
+    /// generation when it sees a new instance, so the reset must follow it.
     pub fn start(&mut self, now: Instant) {
         self.update_watchers();
+        if self.settings.tree.scan_at_startup {
+            self.full_rescan();
+        } else {
+            self.needs_scan = true;
+            self.send_status();
+        }
         self.send_notification(
             method::STYLES,
             p::StylesParams {
@@ -245,14 +253,8 @@ impl Server {
                 styles: BTreeMap::new(),
             },
         );
-        if self.settings.tree.scan_at_startup {
-            self.full_rescan();
-        } else {
-            self.needs_scan = true;
-        }
         self.reset_timers(now);
         self.schedule_view(now, true);
-        self.send_status();
     }
 
     fn rebuild_scan_state(&mut self) {
