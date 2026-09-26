@@ -25,6 +25,8 @@ export interface TreeHooks {
   items(parent?: string): Promise<TestItem[]>;
   /** The current tree item epoch (spec 7.5). */
   readonly epoch: number;
+  /** The line the last todo click flashed. */
+  lastFlash(): { uri: string; line: number } | undefined;
 }
 
 export interface TestHooks {

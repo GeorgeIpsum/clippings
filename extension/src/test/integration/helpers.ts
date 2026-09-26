@@ -3,6 +3,7 @@
 
 import * as vscode from 'vscode';
 import type { ClippingsApi } from '../../testApi';
+import type { TestItem } from '../../tree/testItems';
 
 export async function getApi(): Promise<ClippingsApi> {
   const ext = vscode.extensions.getExtension<ClippingsApi>('clippings-dev.clippings');
@@ -108,4 +109,39 @@ export async function treeBecomes(api: ClippingsApi, expected: string[], depth =
   } catch (err) {
     throw new Error(`${(err as Error).message}\nexpected:\n${expected.join('\n')}\nactual:\n${last.join('\n')}`);
   }
+}
+
+/** Finds a tree item by the labels on the path to it. */
+export async function itemAt(api: ClippingsApi, ...labels: string[]): Promise<TestItem> {
+  let parent: string | undefined;
+  let found: TestItem | undefined;
+  for (const label of labels) {
+    found = (await api.test.tree.items(parent)).find((i) => i.label === label);
+    if (!found) throw new Error(`no tree item ${labels.join(' > ')}`);
+    parent = found.id;
+  }
+  if (!found) throw new Error('no labels');
+  return found;
+}
+
+/** Updates a `clippings.*` setting and waits until VS Code reports the change. */
+export async function setSetting(
+  key: string,
+  value: unknown,
+  target = vscode.ConfigurationTarget.Global,
+): Promise<void> {
+  const changed = new Promise<void>((resolve) => {
+    const sub = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration(`clippings.${key}`)) {
+        sub.dispose();
+        resolve();
+      }
+    });
+  });
+  const current = vscode.workspace.getConfiguration('clippings').inspect(key);
+  const existing =
+    target === vscode.ConfigurationTarget.Global ? current?.globalValue : current?.workspaceValue;
+  if (JSON.stringify(existing) === JSON.stringify(value)) return;
+  await vscode.workspace.getConfiguration('clippings').update(key, value, target);
+  await changed;
 }

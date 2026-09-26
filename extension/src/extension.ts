@@ -3,6 +3,8 @@
 
 import * as vscode from 'vscode';
 import { registerExpandCommands, resetExpansion } from './commands/expand';
+import { registerNavigationCommands } from './commands/navigation';
+import { NEEDS_SCAN_MESSAGE, registerScanCommands } from './commands/scan';
 import { needsRestart, registerServerCommands } from './commands/server';
 import { affectsServer, readConfiguration } from './config/read';
 import { ConfigurationSync, replacesTree } from './config/sync';
@@ -13,7 +15,9 @@ import { ViewStateStore } from './state/viewState';
 import type { ClippingsApi } from './testApi';
 import { Expansion } from './tree/expansion';
 import { NodeCache } from './tree/nodeCache';
+import { LineFlash } from './tree/open';
 import { TreeProvider } from './tree/provider';
+import { Revealer } from './tree/reveal';
 import { testItem } from './tree/testItems';
 
 let connection: ServerConnection | undefined;
@@ -44,6 +48,13 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     expanded: (node) => expansion.expanded(node),
   });
   const treeView = vscode.window.createTreeView('clippings-view', { treeDataProvider: provider });
+  const revealer = new Revealer({
+    find: (uri, line) => server.find(uri, line),
+    cache,
+    view: treeView,
+    settings: () => sync.current,
+  });
+  const flash = new LineFlash();
 
   context.subscriptions.push(
     log,
@@ -51,8 +62,15 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     provider,
     treeView,
     ...registerServerCommands(server, log),
+    revealer,
+    flash,
     ...registerExpandCommands({ store, sync, expansion, provider }),
-    server.onStatus((s) => (lastStatus = s)),
+    ...registerNavigationCommands(revealer, flash),
+    ...registerScanCommands(server),
+    server.onStatus((s) => {
+      lastStatus = s;
+      treeView.message = s.needsScan && !s.scanning ? NEEDS_SCAN_MESSAGE : undefined;
+    }),
     server.onNewInstance(() => provider.reset()),
     server.onTreeChanged((p) => {
       if (p.refresh.includes(null)) expansion.onRootRefresh();
@@ -72,7 +90,10 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         resetExpansion({ expansion, provider }, replacesTree(push));
       }
     }),
-    vscode.window.onDidChangeActiveTextEditor(() => server.activeEditor(activeUri())),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      server.activeEditor(activeUri());
+      revealer.onActiveEditor(editor);
+    }),
   );
   void server.start();
 
@@ -103,6 +124,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         get epoch() {
           return expansion.currentEpoch;
         },
+        lastFlash: () => flash.last,
       },
     },
   };
