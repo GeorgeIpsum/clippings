@@ -22,6 +22,7 @@ export interface CrashEvents {
 
 export class CrashPolicy implements ErrorHandler {
   private running = false;
+  private abandoned = false;
 
   constructor(
     private readonly history: CrashHistory,
@@ -31,6 +32,14 @@ export class CrashPolicy implements ErrorHandler {
   /** Follows the client's state: only a running server can crash. */
   setRunning(running: boolean): void {
     this.running = running;
+  }
+
+  /**
+   * Ends this policy for good, once the connection lets go of its client:
+   * a later close neither counts as a crash nor restarts the server.
+   */
+  abandon(): void {
+    this.abandoned = true;
   }
 
   /**
@@ -44,6 +53,7 @@ export class CrashPolicy implements ErrorHandler {
   }
 
   closed(): CloseHandlerResult {
+    if (this.abandoned) return { action: CloseAction.DoNotRestart, handled: true };
     if (!this.running) {
       this.events.startFailed();
       return { action: CloseAction.DoNotRestart, handled: true };
