@@ -2,13 +2,16 @@
 // server connection.
 
 import * as vscode from 'vscode';
+import { registerExpandCommands, resetExpansion } from './commands/expand';
 import { needsRestart, registerServerCommands } from './commands/server';
 import { affectsServer, readConfiguration } from './config/read';
-import type { StatusParams } from './protocol';
+import { ConfigurationSync, replacesTree } from './config/sync';
 import { IconResolver } from './icons/resolver';
+import type { StatusParams } from './protocol';
 import { ServerConnection } from './server/connection';
 import { ViewStateStore } from './state/viewState';
 import type { ClippingsApi } from './testApi';
+import { Expansion } from './tree/expansion';
 import { NodeCache } from './tree/nodeCache';
 import { TreeProvider } from './tree/provider';
 import { testItem } from './tree/testItems';
@@ -18,39 +21,56 @@ let connection: ServerConnection | undefined;
 export function activate(context: vscode.ExtensionContext): ClippingsApi {
   const log = vscode.window.createOutputChannel('Clippings', { log: true });
   const store = new ViewStateStore(context.workspaceState);
-  const settings = () => readConfiguration(store.snapshot());
   const activeUri = () => vscode.window.activeTextEditor?.document.uri.toString() ?? null;
-  connection = new ServerConnection({
+  const server = new ServerConnection({
     context,
     log,
-    settings,
+    settings: () => sync.current,
     activeUri,
     error: (message, ...actions) => vscode.window.showErrorMessage(message, ...actions),
   });
-  const server = connection;
+  connection = server;
+  const sync = new ConfigurationSync(
+    () => readConfiguration(store.snapshot()),
+    (settings) => server.configure(settings),
+  );
   let lastStatus: StatusParams | undefined;
 
   const cache = new NodeCache();
-  const icons = new IconResolver();
+  const expansion = new Expansion(store);
   const provider = new TreeProvider(server, cache, {
-    icons,
-    itemId: (id) => id,
-    expanded: (node) => node.defaultExpanded,
+    icons: new IconResolver(),
+    itemId: (id) => expansion.itemId(id),
+    expanded: (node) => expansion.expanded(node),
   });
   const treeView = vscode.window.createTreeView('clippings-view', { treeDataProvider: provider });
 
   context.subscriptions.push(
     log,
     server,
-    ...registerServerCommands(server, log),
-    server.onStatus((s) => (lastStatus = s)),
     provider,
     treeView,
+    ...registerServerCommands(server, log),
+    ...registerExpandCommands({ store, sync, expansion, provider }),
+    server.onStatus((s) => (lastStatus = s)),
     server.onNewInstance(() => provider.reset()),
-    server.onTreeChanged((p) => provider.refresh(p.refresh)),
+    server.onTreeChanged((p) => {
+      if (p.refresh.includes(null)) expansion.onRootRefresh();
+      provider.refresh(p.refresh);
+    }),
+    treeView.onDidExpandElement((e) => expansion.set(e.element, true)),
+    treeView.onDidCollapseElement((e) => expansion.set(e.element, false)),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (needsRestart(e)) void server.restart();
-      else if (affectsServer(e)) server.configure(settings());
+      if (needsRestart(e)) {
+        sync.push();
+        void server.restart();
+        return;
+      }
+      if (!affectsServer(e)) return;
+      const push = sync.push();
+      if (e.affectsConfiguration('clippings.tree.expanded')) {
+        resetExpansion({ expansion, provider }, replacesTree(push));
+      }
     }),
     vscode.window.onDidChangeActiveTextEditor(() => server.activeEditor(activeUri())),
   );
@@ -79,6 +99,9 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         items: async (parent) => {
           const ids = await provider.getChildren(parent);
           return ids.map((id) => testItem(id, provider.getTreeItem(id)));
+        },
+        get epoch() {
+          return expansion.currentEpoch;
         },
       },
     },

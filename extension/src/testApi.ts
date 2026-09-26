@@ -23,6 +23,8 @@ export interface TreeHooks {
   readonly onDidChange: vscode.Event<unknown>;
   /** The provider's children of `parent` (top level when omitted), as tree items. */
   items(parent?: string): Promise<TestItem[]>;
+  /** The current tree item epoch (spec 7.5). */
+  readonly epoch: number;
 }
 
 export interface TestHooks {

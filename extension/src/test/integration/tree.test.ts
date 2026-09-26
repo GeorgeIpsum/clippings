@@ -1,28 +1,9 @@
 import * as assert from 'node:assert/strict';
 import { writeFileSync, readFileSync } from 'node:fs';
 import type { ClippingsApi } from '../../testApi';
+import { DEFAULT_TREE } from './fixture';
 import { getApi, outline, treeBecomes, whenIdle, workspacePath } from './helpers';
 
-export const DEFAULT_TREE = [
-  '(Scan mode: workspace and open files)',
-  'workspace',
-  '  docs',
-  '    plan.md',
-  '      [ ] write the guide',
-  '      [x] pick a name',
-  '  lib',
-  '    notes.rs',
-  '      TODO first line of a long note',
-  '  src',
-  '    util',
-  '      strings.py',
-  '        TODO normalise unicode before comparing',
-  '        BUG (bob) drops leading tabs too',
-  '    app.ts',
-  '      TODO (alice) wire up the router',
-  '      FIXME handle the error path',
-  '      HACK temporary shim until the router lands',
-];
 
 describe('tree provider', () => {
   let api: ClippingsApi;
