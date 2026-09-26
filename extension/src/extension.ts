@@ -6,9 +6,10 @@ import { registerExpandCommands, resetExpansion } from './commands/expand';
 import { registerFilterCommands } from './commands/filters';
 import { registerGoToCommands } from './commands/goTo';
 import { registerNavigationCommands } from './commands/navigation';
-import { NEEDS_SCAN_MESSAGE, registerScanCommands } from './commands/scan';
+import { registerScanCommands } from './commands/scan';
 import { needsRestart, registerServerCommands } from './commands/server';
 import { registerSettingCommands } from './commands/settings';
+import { registerStatusBarCommand } from './commands/statusBar';
 import { registerViewCommands } from './commands/view';
 import { affectsServer, readConfiguration } from './config/read';
 import { ConfigurationSync, replacesTree } from './config/sync';
@@ -19,6 +20,7 @@ import { IconResolver } from './icons/resolver';
 import type { StatusParams } from './protocol';
 import { ServerConnection } from './server/connection';
 import { ViewStateStore } from './state/viewState';
+import { StatusController } from './status/controller';
 import type { ClippingsApi } from './testApi';
 import { Expansion } from './tree/expansion';
 import { NodeCache } from './tree/nodeCache';
@@ -69,6 +71,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
   });
   const flash = new LineFlash();
   const writer = new SettingWriter(prompts);
+  const statusController = new StatusController(treeView, prompts);
 
   context.subscriptions.push(
     log,
@@ -84,11 +87,13 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     ...registerFilterCommands({ store, sync, cache, prompts }),
     ...registerSettingCommands(writer, prompts),
     ...registerGoToCommands(server),
+    statusController,
+    registerStatusBarCommand({ sync, writer, prompts, view: treeView }),
     ...registerScanCommands(server),
     server.onStatus((s) => {
       lastStatus = s;
       updateContext();
-      treeView.message = s.needsScan && !s.scanning ? NEEDS_SCAN_MESSAGE : undefined;
+      statusController.update(s);
     }),
     server.onNewInstance(() => provider.reset()),
     server.onTreeChanged((p) => {
@@ -123,6 +128,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
       prompts,
       viewState: () => store.snapshot(),
       contextKeys: () => contextKeys.values,
+      statusBar: () => statusController.shown,
       server: {
         get running() {
           return server.running;

@@ -4,6 +4,7 @@
 import type * as vscode from 'vscode';
 import type { StatusParams } from './protocol';
 import type { PersistedViewState } from './state/viewState';
+import type { StatusBarView } from './status/presentation';
 import type { TestItem } from './tree/testItems';
 import type { Prompts } from './ui/prompts';
 
@@ -37,6 +38,8 @@ export interface TestHooks {
   viewState(): PersistedViewState;
   /** The context keys last set (spec 7.6). */
   contextKeys(): Readonly<Record<string, boolean | string>>;
+  /** What the status bar item shows. */
+  statusBar(): StatusBarView | undefined;
   readonly server: ServerHooks;
   readonly tree: TreeHooks;
 }
