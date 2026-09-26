@@ -145,3 +145,24 @@ export async function setSetting(
   await vscode.workspace.getConfiguration('clippings').update(key, value, target);
   await changed;
 }
+
+/** Resolves with the next event that matches, or rejects after a timeout. */
+export function nextEvent<T>(
+  what: string,
+  event: vscode.Event<T>,
+  matches: (e: T) => boolean = () => true,
+  timeoutMs = 15_000,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      sub.dispose();
+      reject(new Error(`timed out waiting for ${what}`));
+    }, timeoutMs);
+    const sub = event((e) => {
+      if (!matches(e)) return;
+      clearTimeout(timer);
+      sub.dispose();
+      resolve(e);
+    });
+  });
+}

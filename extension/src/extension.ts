@@ -16,6 +16,7 @@ import { ConfigurationSync, replacesTree } from './config/sync';
 import { ContextKeys } from './context/apply';
 import { contextValues } from './context/keys';
 import { SettingWriter } from './config/writes';
+import { DecorationManager } from './decorations/manager';
 import { IconResolver } from './icons/resolver';
 import type { StatusParams } from './protocol';
 import { ServerConnection } from './server/connection';
@@ -55,10 +56,12 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
   sync.onPush(updateContext);
   updateContext();
 
+  const icons = new IconResolver();
+  const decorations = new DecorationManager(icons);
   const cache = new NodeCache();
   const expansion = new Expansion(store);
   const provider = new TreeProvider(server, cache, {
-    icons: new IconResolver(),
+    icons,
     itemId: (id) => expansion.itemId(id),
     expanded: (node) => expansion.expanded(node),
   });
@@ -95,7 +98,15 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
       updateContext();
       statusController.update(s);
     }),
-    server.onNewInstance(() => provider.reset()),
+    decorations,
+    server.onNewInstance(() => {
+      provider.reset();
+      decorations.reset();
+    }),
+    server.onStyles((p) => decorations.onStyles(p)),
+    server.onDecorations((p) => decorations.onDecorations(p)),
+    vscode.window.onDidChangeVisibleTextEditors((editors) => decorations.onVisibleEditors(editors)),
+    vscode.workspace.onDidCloseTextDocument((d) => decorations.onDocumentClosed(d)),
     server.onTreeChanged((p) => {
       if (p.refresh.includes(null)) expansion.onRootRefresh();
       provider.refresh(p.refresh);
@@ -129,6 +140,16 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
       viewState: () => store.snapshot(),
       contextKeys: () => contextKeys.values,
       statusBar: () => statusController.shown,
+      decorations: {
+        onApplied: decorations.onApplied,
+        entry: (uri) => decorations.entry(uri),
+        get generation() {
+          return decorations.currentGeneration;
+        },
+        get styleKeys() {
+          return decorations.styleKeys;
+        },
+      },
       server: {
         get running() {
           return server.running;

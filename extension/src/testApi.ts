@@ -2,7 +2,8 @@
 // observe state VS Code offers no API to read (spec 12.5).
 
 import type * as vscode from 'vscode';
-import type { StatusParams } from './protocol';
+import type { ApplySource } from './decorations/manager';
+import type { DecorationsParams, StatusParams } from './protocol';
 import type { PersistedViewState } from './state/viewState';
 import type { StatusBarView } from './status/presentation';
 import type { TestItem } from './tree/testItems';
@@ -32,6 +33,15 @@ export interface TreeHooks {
   lastFlash(): { uri: string; line: number } | undefined;
 }
 
+export interface DecorationHooks {
+  /** Fires after decorations are applied to a document's visible editors. */
+  readonly onApplied: vscode.Event<{ uri: string; source: ApplySource }>;
+  /** The decorations last applied to a document. */
+  entry(uri: string): DecorationsParams | undefined;
+  readonly generation: number | undefined;
+  readonly styleKeys: string[];
+}
+
 export interface TestHooks {
   /** Answers prompts and records messages. */
   readonly prompts: Prompts;
@@ -40,6 +50,7 @@ export interface TestHooks {
   contextKeys(): Readonly<Record<string, boolean | string>>;
   /** What the status bar item shows. */
   statusBar(): StatusBarView | undefined;
+  readonly decorations: DecorationHooks;
   readonly server: ServerHooks;
   readonly tree: TreeHooks;
 }

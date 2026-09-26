@@ -20,4 +20,9 @@ export class IconResolver {
         return undefined;
     }
   }
+
+  /** A gutter icon file; codicons have none. */
+  gutterIcon(_icon: IconDescriptor): vscode.Uri | undefined {
+    return undefined;
+  }
 }
