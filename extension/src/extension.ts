@@ -3,9 +3,11 @@
 
 import * as vscode from 'vscode';
 import { registerExpandCommands, resetExpansion } from './commands/expand';
+import { registerFilterCommands } from './commands/filters';
 import { registerNavigationCommands } from './commands/navigation';
 import { NEEDS_SCAN_MESSAGE, registerScanCommands } from './commands/scan';
 import { needsRestart, registerServerCommands } from './commands/server';
+import { registerViewCommands } from './commands/view';
 import { affectsServer, readConfiguration } from './config/read';
 import { ConfigurationSync, replacesTree } from './config/sync';
 import { IconResolver } from './icons/resolver';
@@ -18,6 +20,7 @@ import { NodeCache } from './tree/nodeCache';
 import { LineFlash } from './tree/open';
 import { TreeProvider } from './tree/provider';
 import { Revealer } from './tree/reveal';
+import { Prompts } from './ui/prompts';
 import { testItem } from './tree/testItems';
 
 let connection: ServerConnection | undefined;
@@ -25,13 +28,14 @@ let connection: ServerConnection | undefined;
 export function activate(context: vscode.ExtensionContext): ClippingsApi {
   const log = vscode.window.createOutputChannel('Clippings', { log: true });
   const store = new ViewStateStore(context.workspaceState);
+  const prompts = new Prompts();
   const activeUri = () => vscode.window.activeTextEditor?.document.uri.toString() ?? null;
   const server = new ServerConnection({
     context,
     log,
     settings: () => sync.current,
     activeUri,
-    error: (message, ...actions) => vscode.window.showErrorMessage(message, ...actions),
+    error: (message, ...actions) => prompts.message('error', message, ...actions),
   });
   connection = server;
   const sync = new ConfigurationSync(
@@ -66,6 +70,8 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     flash,
     ...registerExpandCommands({ store, sync, expansion, provider }),
     ...registerNavigationCommands(revealer, flash),
+    ...registerViewCommands({ store, sync, expansion, provider, prompts }),
+    ...registerFilterCommands({ store, sync, cache, prompts }),
     ...registerScanCommands(server),
     server.onStatus((s) => {
       lastStatus = s;
@@ -101,6 +107,8 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
   return {
     version: manifest.version,
     test: {
+      prompts,
+      viewState: () => store.snapshot(),
       server: {
         get running() {
           return server.running;

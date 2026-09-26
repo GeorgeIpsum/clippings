@@ -3,7 +3,9 @@
 
 import type * as vscode from 'vscode';
 import type { StatusParams } from './protocol';
+import type { PersistedViewState } from './state/viewState';
 import type { TestItem } from './tree/testItems';
+import type { Prompts } from './ui/prompts';
 
 export interface ServerHooks {
   readonly running: boolean;
@@ -30,6 +32,9 @@ export interface TreeHooks {
 }
 
 export interface TestHooks {
+  /** Answers prompts and records messages. */
+  readonly prompts: Prompts;
+  viewState(): PersistedViewState;
   readonly server: ServerHooks;
   readonly tree: TreeHooks;
 }

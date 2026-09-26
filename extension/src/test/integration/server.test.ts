@@ -9,7 +9,8 @@ import { START_TIMEOUT_MS, ServerConnection, type ConnectionHost } from '../../s
 import { ViewStateStore } from '../../state/viewState';
 import type { ClippingsApi } from '../../testApi';
 import { MemoryMemento } from '../unit/memento';
-import { getApi, waitFor, whenIdle, withTimeout } from './helpers';
+import { DEFAULT_TREE } from './fixture';
+import { getApi, treeBecomes, waitFor, whenIdle, withTimeout } from './helpers';
 
 describe('server lifecycle', () => {
   let api: ClippingsApi;
@@ -123,6 +124,8 @@ describe('server lifecycle', () => {
       const message = await waitFor('the crash notice', () => notice, [s.onGaveUp]);
       assert.match(message, /crashed 5 times in the last 3 minutes/);
       assert.equal(s.running, false);
+      const shown = api.test.prompts.shown.at(-1);
+      assert.deepEqual(shown, { kind: 'error', message, actions: ['Restart', 'Show Log'] });
     } finally {
       setServerPath(real);
       subscription.dispose();
@@ -132,6 +135,7 @@ describe('server lifecycle', () => {
     await withTimeout('Restart Server with the real server', restart);
     await whenIdle(api);
     assert.ok(s.running);
+    await treeBecomes(api, DEFAULT_TREE);
   });
 
   it('counts a server that does not finish starting in time as a crash and kills it', async function () {
@@ -171,6 +175,8 @@ describe('server lifecycle', () => {
       const started = readFileSync(pids, 'utf8').trim().split('\n').map(Number);
       assert.equal(started.length, 5, 'five attempts');
       for (const pid of started) assert.throws(() => process.kill(pid, 0), /ESRCH/, `server process ${pid} is gone`);
+      const shown = api.test.prompts.shown.at(-1);
+      assert.deepEqual(shown, { kind: 'error', message, actions: ['Restart', 'Show Log'] });
     } finally {
       setServerPath(real);
       s.setStartTimeout(START_TIMEOUT_MS);
@@ -181,6 +187,7 @@ describe('server lifecycle', () => {
     await withTimeout('Restart Server with the real server', restart);
     await whenIdle(api);
     assert.ok(s.running);
+    await treeBecomes(api, DEFAULT_TREE);
   });
 
   it('ends two overlapping restarts with one server', async function () {
