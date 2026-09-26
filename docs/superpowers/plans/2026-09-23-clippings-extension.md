@@ -38,7 +38,7 @@ These inputs are implied by the spec but easy to miss, and each would bite a rea
 2. **Todos in Jupyter notebook cells** must appear under their notebook in the tree and be decorated in each cell's editor, through the `vscode-notebook-cell` scheme. Test `lists and decorates the todos in notebook cells` in Task 14.
 3. **Folders whose names contain spaces, brackets or parentheses**, such as `app [slug] (old)` in a Next.js project, must filter exactly through Only Show This Folder and Hide This Folder, because the temporary glob escapes them the way the server's glob matcher reads them. Test `filters a folder whose name has spaces and brackets` in Task 10.
 4. **An untrusted workspace that sets `clippings.server.path`**, as a cloned repository can, must not run that binary or even prompt; the user's own value or the bundled server applies. Test `ignores a workspace server.path in an untrusted workspace` in Task 3.
-5. **A server that keeps crashing, or exits while it starts**, as a broken or mismatched binary can, must stop after five crashes within three minutes, show a notice with Restart and Show Log, and come back on Restart Server without hanging. Tests `stops restarting after five crashes in three minutes and restarts on demand` and `counts a server that exits while starting as a crash and restarts on demand` in Task 6; Task 10 adds the checks that the notice goes through the prompts module and that the tree loads after the restart.
+5. **A server that keeps crashing, exits while it starts, or hangs while it starts**, as a broken or mismatched binary can, must stop after five crashes within three minutes, leave no server process behind, show a notice with Restart and Show Log, and come back on Restart Server without hanging. Tests `stops restarting after five crashes in three minutes and restarts on demand`, `counts a server that exits while starting as a crash and restarts on demand` and `counts a server that does not finish starting in time as a crash and kills it` in Task 6; Task 10 adds the checks that the notice goes through the prompts module and that the tree loads after the restart.
 
 ## Rulings made while prototyping this plan
 
@@ -71,7 +71,7 @@ Each was taken where the spec was silent, unworkable or at odds with todo-tree. 
 25. **Scanning texts.** While a full scan runs the status bar shows `Clippings: Scanning...` with the tooltip `Click to interrupt scan`, and after a stop `Clippings: Scanning interrupted.` with `Click to restart`: todo-tree's texts with `Clippings` in place of `Todo Tree` (Task 13, spec 7.7).
 26. **What counts as extension host time.** The provider's own synchronous work, which is handling `clippings/treeChanged`, recording children and building tree items, plus parsing the children response. VS Code's own tree conversion is not visible to the extension. The prototype measured about 1.4 ms for 1,000 nodes against the 30 ms target, and about 40 ms end to end including the server round trip and VS Code's tree IPC, which is not host time (Task 18, spec 13).
 27. **The test VS Code version is `stable`, not pinned**, so the suite follows current VS Code. `CLIPPINGS_TEST_VSCODE` names another version when a run must be reproduced (Task 1, spec 12.5).
-28. **A server that fails to start counts as a crash.** When the server exits before the client is running, as during `initialize`, the language client's `start()` can stay pending forever, and a restart that waited on it hung, leaving the extension dead. The connection now treats that exit as a start failure: it settles the start at once, disposes that language client, records a crash in one five-in-three-minutes count shared by every client of the connection, and starts a fresh client until the limit, then shows the crash notice with Restart and Show Log. `clippings.restartServer` forgets past crashes and always builds a fresh client. Clippings counts crashes itself instead of using the language client's default handler, whose count lived and died with each client (Tasks 6 and 10, spec 7.4).
+28. **A server that fails to start counts as a crash.** When the server exits before the client is running, as during `initialize`, or hangs there, the language client's `start()` can stay pending forever, and a restart that waited on it hung, leaving the extension dead. The connection now treats an exit before running, a rejected start, or a start that does not finish within 10 seconds (`START_TIMEOUT_MS`), as a start failure: it settles the start at once, kills the server process (SIGTERM, then SIGKILL, each with a 2-second wait), disposes that language client, records a crash in one five-in-three-minutes count shared by every client of the connection, and starts a fresh client until the limit, then shows the crash notice with Restart and Show Log. `clippings.restartServer` forgets past crashes and always builds a fresh client. Clippings counts crashes itself instead of using the language client's default handler, whose count lived and died with each client, spawns the server process itself, because the language client forgets its process handle once the connection closes, even while that process still runs, and always continues on connection errors: writes to a server that just died fail before the connection closes, and the default handler's shutdown after three of them stopped the client without any restart or notice (Tasks 6 and 10, spec 7.4).
 29. **The client sends no `$/cancelRequest`.** It passes no cancellation tokens: children, find and navigate requests are short, and VS Code's `TreeDataProvider.getChildren` receives no token to pass on. Spec 6.1 no longer lists it (Task 21).
 
 ---
@@ -4247,7 +4247,7 @@ EOF
 
 ### Task 6: Language client, crash restarts and server commands
 
-`ServerConnection` owns the server's lifecycle (spec 7.4): it resolves the binary, spawns `clippings lsp` through `vscode-languageclient` with `RUST_BACKTRACE=1` and `CLIPPINGS_LOG`, sends the configuration object in `initializationOptions`, and turns the four server notifications into events. `CrashHistory` counts crashes across every client of the connection, five within three minutes, and a server that exits before it is running counts too: the start settles at once, that client is disposed and a fresh one starts, until the limit brings the notice with Restart and Show Log (ruling 28, Review Focus 5). `clippings.restartServer` and `clippings.showLog` are registered; a change to `general.schemes`, `server.path`, `server.logLevel` or `trace.server` restarts the client, and granting workspace trust restarts it when a workspace `server.path` exists. The integration tests kill the server process, and point `CLIPPINGS_SERVER_PATH` at a script that passes the probe but exits on `initialize`, to prove the restart policy.
+`ServerConnection` owns the server's lifecycle (spec 7.4): it resolves the binary, spawns `clippings lsp` through `vscode-languageclient` with `RUST_BACKTRACE=1` and `CLIPPINGS_LOG`, sends the configuration object in `initializationOptions`, and turns the four server notifications into events. `CrashHistory` counts crashes across every client of the connection, five within three minutes, and a server that exits before it is running, or does not finish starting within `START_TIMEOUT_MS` (10 seconds), counts too: the start settles at once, the server process is killed, that client is disposed and a fresh one starts, until the limit brings the notice with Restart and Show Log (ruling 28, Review Focus 5). `clippings.restartServer` and `clippings.showLog` are registered; a change to `general.schemes`, `server.path`, `server.logLevel` or `trace.server` restarts the client, and granting workspace trust restarts it when a workspace `server.path` exists. The integration tests kill the server process, and point `CLIPPINGS_SERVER_PATH` at scripts that pass the probe and then exit on `initialize` or never answer it, with the timeout shortened through a test hook, to prove the restart policy and that no server process is left behind.
 
 **Files:**
 - Create: `extension/src/commands/server.ts`, `extension/src/server/connection.ts`, `extension/src/server/crashHistory.ts`, `extension/src/server/crashPolicy.ts`, `extension/src/server/messages.ts`, `extension/src/testApi.ts`
@@ -4257,9 +4257,9 @@ EOF
 **Interfaces:**
 - Consumes: `config/read.ts` (Task 2): `affectsServer`, `readConfiguration`; `protocol.ts` (Task 2): `ActiveEditorParams`, `ChildrenParams`, `ChildrenResult`, `DecorationsParams`, `Direction`, `ExportResult`, `FindParams`, `FindResult`, `Method`, `NavigateParams`, `NavigateResult`, `PROTOCOL_VERSION`, `Position`, `Range`, `Settings`, `StatusParams`, `StylesParams`, `TreeChangedParams`, `ViewNode`; `server/locate.ts` (Task 3): `locateServer`; `server/resolve.ts` (Task 3): `ResolutionError`; `state/viewState.ts` (Task 2): `ViewStateStore`.
 - Produces, in `commands/server.ts`: `function registerServerCommands(connection: ServerConnection, log: vscode.LogOutputChannel): vscode.Disposable[]`; `function needsRestart(e: vscode.ConfigurationChangeEvent): boolean`.
-- Produces, in `server/connection.ts`: `ConnectionHost` (interface); `class ServerConnection implements vscode.Disposable` with `readonly onStatus: vscode.Event<StatusParams>`, `readonly onTreeChanged: vscode.Event<TreeChangedParams>`, `readonly onStyles: vscode.Event<StylesParams>`, `readonly onDecorations: vscode.Event<DecorationsParams>`, `readonly onGaveUp: vscode.Event<string>`, `readonly onRunning: vscode.Event<void>`, `constructor(private readonly host: ConnectionHost)`, `get running(): boolean`, `get pid(): number | undefined`, `start(): Promise<void>`, `async restart(): Promise<void>`, `async stop(): Promise<void>`, `configure(settings: Settings): void`, `activeEditor(uri: string | null): void`, `rescan(): void`, `stopScan(): void`, `async children(parent: string | null): Promise<ViewNode[]>`, `async find(uri: string, line: number | null): Promise<ViewNode[][]>`, `async navigate(uri: string, positions: Position[], direction: Direction): Promise<Range[] | null>`, `async export(): Promise<ExportResult | undefined>`, `dispose(): void`.
+- Produces, in `server/connection.ts`: `START_TIMEOUT_MS` (const); `ConnectionHost` (interface); `class ServerConnection implements vscode.Disposable` with `startTimeoutMs = START_TIMEOUT_MS`, `readonly onStatus: vscode.Event<StatusParams>`, `readonly onTreeChanged: vscode.Event<TreeChangedParams>`, `readonly onStyles: vscode.Event<StylesParams>`, `readonly onDecorations: vscode.Event<DecorationsParams>`, `readonly onGaveUp: vscode.Event<string>`, `readonly onRunning: vscode.Event<void>`, `constructor(private readonly host: ConnectionHost)`, `get running(): boolean`, `get pid(): number | undefined`, `start(): Promise<void>`, `async restart(): Promise<void>`, `async stop(): Promise<void>`, `configure(settings: Settings): void`, `activeEditor(uri: string | null): void`, `rescan(): void`, `stopScan(): void`, `async children(parent: string | null): Promise<ViewNode[]>`, `async find(uri: string, line: number | null): Promise<ViewNode[][]>`, `async navigate(uri: string, positions: Position[], direction: Direction): Promise<Range[] | null>`, `async export(): Promise<ExportResult | undefined>`, `dispose(): void`.
 - Produces, in `server/crashHistory.ts`: `MAX_CRASHES` (const); `CRASH_WINDOW_MS` (const); `GIVE_UP_MESSAGE` (const); `class CrashHistory` with `record(now: number): 'restart' | 'give up'`, `clear(): void`.
-- Produces, in `server/crashPolicy.ts`: `CrashEvents` (interface); `class CrashPolicy implements ErrorHandler` with `constructor(private readonly history: CrashHistory, private readonly events: CrashEvents)`, `setRunning(running: boolean): void`, `error(_error: Error, _message: unknown, count: number | undefined): ErrorHandlerResult`, `closed(): CloseHandlerResult`.
+- Produces, in `server/crashPolicy.ts`: `CrashEvents` (interface); `class CrashPolicy implements ErrorHandler` with `constructor(private readonly history: CrashHistory, private readonly events: CrashEvents)`, `setRunning(running: boolean): void`, `error(): ErrorHandlerResult`, `closed(): CloseHandlerResult`.
 - Produces, in `server/messages.ts`: `Configure` (const); `ActiveEditor` (const); `Rescan` (const); `StopScan` (const); `Children` (const); `Find` (const); `Navigate` (const); `Export` (const); `TreeChanged` (const); `Styles` (const); `Decorations` (const); `Status` (const).
 - Produces, in `testApi.ts`: `ServerHooks` (interface); `TestHooks` (interface); `ClippingsApi` (interface).
 - Produces, in `extension.ts`: `async function deactivate(): Promise<void>`.
@@ -4356,10 +4356,11 @@ Create `extension/src/test/integration/server.test.ts`:
 
 ```ts
 import * as assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { START_TIMEOUT_MS } from '../../server/connection';
 import type { ClippingsApi } from '../../testApi';
 import { getApi, waitFor, whenIdle, withTimeout } from './helpers';
 
@@ -4485,6 +4486,55 @@ describe('server lifecycle', () => {
     assert.ok(s.running);
   });
 
+  it('counts a server that does not finish starting in time as a crash and kills it', async function () {
+    if (process.platform === 'win32') this.skip();
+    this.timeout(60_000);
+    const s = api.test.server;
+    // Passes the probe, then reads `initialize` and never answers.
+    const dir = mkdtempSync(join(tmpdir(), 'clippings-fake-'));
+    const fake = join(dir, 'clippings');
+    const pids = join(dir, 'pids');
+    writeFileSync(
+      fake,
+      [
+        '#!/bin/sh',
+        'if [ "$1" = probe ]; then',
+        '  echo \'{"version":"0.0.0","target":"fake","protocolVersion":1}\'',
+        '  exit 0',
+        'fi',
+        `echo $$ >> '${pids}'`,
+        // Keeps stdout open on fd 3 while discarding the requests.
+        'exec cat 3>&1 > /dev/null',
+        '',
+      ].join('\n'),
+    );
+    chmodSync(fake, 0o755);
+    const real = process.env['CLIPPINGS_SERVER_PATH'];
+    let notice: string | undefined;
+    const subscription = s.onGaveUp((message) => (notice = message));
+    try {
+      process.env['CLIPPINGS_SERVER_PATH'] = fake;
+      s.setStartTimeout(500);
+      const restart = vscode.commands.executeCommand('clippings.restartServer');
+      await withTimeout('Restart Server with a server that hangs', restart);
+      const message = await waitFor('the crash notice', () => notice, [s.onGaveUp]);
+      assert.match(message, /crashed 5 times in the last 3 minutes/);
+      assert.equal(s.running, false);
+      const started = readFileSync(pids, 'utf8').trim().split('\n').map(Number);
+      assert.equal(started.length, 5, 'five attempts');
+      for (const pid of started) assert.throws(() => process.kill(pid, 0), /ESRCH/, `server process ${pid} is gone`);
+    } finally {
+      process.env['CLIPPINGS_SERVER_PATH'] = real;
+      s.setStartTimeout(START_TIMEOUT_MS);
+      subscription.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const restart = vscode.commands.executeCommand('clippings.restartServer');
+    await withTimeout('Restart Server with the real server', restart);
+    await whenIdle(api);
+    assert.ok(s.running);
+  });
+
   it('shows the log', async () => {
     await vscode.commands.executeCommand('clippings.showLog');
   });
@@ -4523,7 +4573,7 @@ describe('crash history', () => {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `pnpm -C extension typecheck`
-Expected: FAIL. `error TS2307: Cannot find module '../../testApi'` in `helpers.ts` and `server.test.ts`, and `error TS2307: Cannot find module '../../server/crashHistory'`.
+Expected: FAIL. `error TS2307: Cannot find module '../../testApi'` in `helpers.ts` and `server.test.ts`, and `error TS2307: Cannot find module` for `../../server/connection` and `../../server/crashHistory`.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -4563,6 +4613,7 @@ Create `extension/src/server/connection.ts`:
 // demand or after a crash. Everything else talks to the server through this
 // class.
 
+import { spawn, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import { LanguageClient, State, type LanguageClientOptions, type ServerOptions } from 'vscode-languageclient/node';
 import {
@@ -4584,6 +4635,11 @@ import { locateServer } from './locate';
 import * as m from './messages';
 import { ResolutionError } from './resolve';
 
+/** How long a server may take to finish starting before it counts as a crash. */
+export const START_TIMEOUT_MS = 10_000;
+/** How long to wait for a killed server process to exit, per signal. */
+const KILL_WAIT_MS = 2000;
+
 export interface ConnectionHost {
   readonly context: vscode.ExtensionContext;
   readonly log: vscode.LogOutputChannel;
@@ -4597,9 +4653,17 @@ export interface ConnectionHost {
 
 export class ServerConnection implements vscode.Disposable {
   private client: LanguageClient | undefined;
+  /**
+   * The current client's server process. Clippings spawns it itself: the
+   * language client forgets its process once the connection closes, and a
+   * server that closed its output can still be alive and must be killed.
+   */
+  private process: ChildProcess | undefined;
   private starting: Promise<void> | undefined;
   /** Crashes and start failures across every client of this connection. */
   private readonly crashes = new CrashHistory();
+  /** `START_TIMEOUT_MS`; tests shorten it. */
+  startTimeoutMs = START_TIMEOUT_MS;
   private readonly emitters = {
     gaveUp: new vscode.EventEmitter<string>(),
     status: new vscode.EventEmitter<StatusParams>(),
@@ -4632,7 +4696,7 @@ export class ServerConnection implements vscode.Disposable {
 
   /** The server process ID, for tests. */
   get pid(): number | undefined {
-    return this.client?.serverProcess?.pid;
+    return this.client ? this.process?.pid : undefined;
   }
 
   start(): Promise<void> {
@@ -4650,7 +4714,9 @@ export class ServerConnection implements vscode.Disposable {
 
   async stop(): Promise<void> {
     const client = this.client;
+    const child = this.process;
     this.client = undefined;
+    this.process = undefined;
     if (client) {
       try {
         await client.dispose(2000);
@@ -4658,6 +4724,7 @@ export class ServerConnection implements vscode.Disposable {
         this.host.log.warn(`Stopping the server failed: ${String(err)}`);
       }
     }
+    await killProcess(child);
   }
 
   /**
@@ -4686,27 +4753,35 @@ export class ServerConnection implements vscode.Disposable {
       return 'error';
     }
     const settings = this.host.settings();
-    const serverOptions: ServerOptions = {
-      command: serverPath,
-      args: ['lsp'],
-      options: {
-        env: {
-          ...process.env,
-          RUST_BACKTRACE: '1',
-          CLIPPINGS_LOG: vscode.workspace.getConfiguration('clippings').get<string>('server.logLevel', 'info'),
-        },
-      },
+    const env = {
+      ...process.env,
+      RUST_BACKTRACE: '1',
+      CLIPPINGS_LOG: vscode.workspace.getConfiguration('clippings').get<string>('server.logLevel', 'info'),
+    };
+    // Called for the first start and for each restart after a crash.
+    let child: ChildProcess | undefined;
+    const serverOptions: ServerOptions = () => {
+      child = spawn(serverPath, ['lsp'], { env, windowsHide: true });
+      if (this.client === client) this.process = child;
+      return Promise.resolve(child);
     };
     // Set while `startOnce` waits for this client; a start failure after that
     // comes from the client restarting a crashed server.
     let waiting: ((outcome: 'failed') => void) | undefined;
     const failed = new Promise<'failed'>((resolve) => (waiting = resolve));
+    // Each start, first or after a crash, must reach the running state in time.
+    let watchdog: NodeJS.Timeout | undefined;
+    let abandoned = false;
+    const startFailed = (reason: string) => {
+      if (abandoned) return;
+      abandoned = true;
+      clearTimeout(watchdog);
+      log.error(reason);
+      if (waiting) waiting('failed');
+      else void this.afterStartFailure(client, child);
+    };
     const policy = new CrashPolicy(this.crashes, {
-      startFailed: () => {
-        log.error('The server exited while starting.');
-        if (waiting) waiting('failed');
-        else void this.afterStartFailure(client);
-      },
+      startFailed: () => startFailed('The server exited while starting.'),
       gaveUp: (message) => void this.showCrash(message),
     });
     const clientOptions: LanguageClientOptions = {
@@ -4721,38 +4796,52 @@ export class ServerConnection implements vscode.Disposable {
     client.onNotification(m.Styles, (p) => this.emitters.styles.fire(p));
     client.onNotification(m.Decorations, (p) => this.emitters.decorations.fire(p));
     client.onDidChangeState((e) => {
+      clearTimeout(watchdog);
+      if (e.newState === State.Starting) {
+        const seconds = this.startTimeoutMs / 1000;
+        watchdog = setTimeout(
+          () => startFailed(`The server did not finish starting within ${seconds} s.`),
+          this.startTimeoutMs,
+        );
+      }
       policy.setRunning(e.newState === State.Running);
       if (e.newState === State.Running && this.client === client) this.onClientRunning(client);
     });
     this.client = client;
-    // When the server exits during `initialize`, `start()` may never settle;
-    // the policy's start failure settles the race instead.
+    // When the server exits or hangs during `initialize`, `start()` may never
+    // settle; a start failure settles the race instead.
     const started = client.start().then(() => 'started' as const);
     started.catch(() => undefined);
     try {
       const outcome = await Promise.race([started, failed]);
-      if (outcome === 'failed') await this.discard(client);
+      if (outcome === 'failed') await this.discard(client, child);
       return outcome;
     } catch (err) {
+      // `initialize` failed or the connection closed under it: a start failure.
+      abandoned = true;
+      clearTimeout(watchdog);
       log.error(`The server failed to start: ${String(err)}`);
-      await this.discard(client);
-      void this.showError(`Clippings: the server failed to start. ${err instanceof Error ? err.message : ''}`, false);
-      return 'error';
+      await this.discard(client, child);
+      return 'failed';
     } finally {
       waiting = undefined;
     }
   }
 
-  /** A crashed server that the client restarted then exited while starting. */
-  private async afterStartFailure(client: LanguageClient): Promise<void> {
-    await this.discard(client);
+  /** A crashed server that the client restarted, then failed to start. */
+  private async afterStartFailure(client: LanguageClient, child: ChildProcess | undefined): Promise<void> {
+    await this.discard(client, child);
     if (this.crashes.record(Date.now()) === 'give up') void this.showCrash(GIVE_UP_MESSAGE);
     else void this.start();
   }
 
-  /** Forgets a client whose server is gone; it cannot be started again. */
-  private async discard(client: LanguageClient): Promise<void> {
-    if (this.client === client) this.client = undefined;
+  /** Forgets a client whose server failed; it cannot be started again. */
+  private async discard(client: LanguageClient, child: ChildProcess | undefined): Promise<void> {
+    if (this.client === client) {
+      this.client = undefined;
+      this.process = undefined;
+    }
+    await killProcess(child);
     try {
       await client.dispose(2000);
     } catch {
@@ -4828,6 +4917,20 @@ export class ServerConnection implements vscode.Disposable {
     for (const e of Object.values(this.emitters)) e.dispose();
   }
 }
+
+/** Ends a server process that did not exit by itself: SIGTERM, then SIGKILL. */
+async function killProcess(child: ChildProcess | undefined): Promise<void> {
+  if (!child) return;
+  const exited = () => child.exitCode !== null || child.signalCode !== null;
+  for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+    if (exited()) return;
+    const exit = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill(signal);
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([exit, new Promise<void>((resolve) => (timer = setTimeout(resolve, KILL_WAIT_MS)))]);
+    clearTimeout(timer);
+  }
+}
 ```
 
 Create `extension/src/server/crashHistory.ts`:
@@ -4900,9 +5003,14 @@ export class CrashPolicy implements ErrorHandler {
     this.running = running;
   }
 
-  /** As the language client's default: tolerate three message errors, then shut down. */
-  error(_error: Error, _message: unknown, count: number | undefined): ErrorHandlerResult {
-    return count !== undefined && count <= 3 ? { action: ErrorAction.Continue } : { action: ErrorAction.Shutdown };
+  /**
+   * Always continues. Writes to a server that just died fail before the
+   * connection closes; shutting down on them, as the language client's
+   * default does after three, would stop the client without `closed`
+   * ever deciding on a restart.
+   */
+  error(): ErrorHandlerResult {
+    return { action: ErrorAction.Continue };
   }
 
   closed(): CloseHandlerResult {
@@ -4971,6 +5079,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -5042,6 +5152,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
     },
@@ -5063,7 +5174,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `34 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `8 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `9 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -5663,6 +5774,7 @@ Replace `extension/src/server/connection.ts` with:
 // demand or after a crash. Everything else talks to the server through this
 // class.
 
+import { spawn, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import { LanguageClient, State, type LanguageClientOptions, type ServerOptions } from 'vscode-languageclient/node';
 import {
@@ -5684,6 +5796,11 @@ import { locateServer } from './locate';
 import * as m from './messages';
 import { ResolutionError } from './resolve';
 
+/** How long a server may take to finish starting before it counts as a crash. */
+export const START_TIMEOUT_MS = 10_000;
+/** How long to wait for a killed server process to exit, per signal. */
+const KILL_WAIT_MS = 2000;
+
 export interface ConnectionHost {
   readonly context: vscode.ExtensionContext;
   readonly log: vscode.LogOutputChannel;
@@ -5697,9 +5814,17 @@ export interface ConnectionHost {
 
 export class ServerConnection implements vscode.Disposable {
   private client: LanguageClient | undefined;
+  /**
+   * The current client's server process. Clippings spawns it itself: the
+   * language client forgets its process once the connection closes, and a
+   * server that closed its output can still be alive and must be killed.
+   */
+  private process: ChildProcess | undefined;
   private starting: Promise<void> | undefined;
   /** Crashes and start failures across every client of this connection. */
   private readonly crashes = new CrashHistory();
+  /** `START_TIMEOUT_MS`; tests shorten it. */
+  startTimeoutMs = START_TIMEOUT_MS;
   private readonly emitters = {
     gaveUp: new vscode.EventEmitter<string>(),
     status: new vscode.EventEmitter<StatusParams>(),
@@ -5739,7 +5864,7 @@ export class ServerConnection implements vscode.Disposable {
 
   /** The server process ID, for tests. */
   get pid(): number | undefined {
-    return this.client?.serverProcess?.pid;
+    return this.client ? this.process?.pid : undefined;
   }
 
   start(): Promise<void> {
@@ -5757,7 +5882,9 @@ export class ServerConnection implements vscode.Disposable {
 
   async stop(): Promise<void> {
     const client = this.client;
+    const child = this.process;
     this.client = undefined;
+    this.process = undefined;
     if (client) {
       try {
         await client.dispose(2000);
@@ -5765,6 +5892,7 @@ export class ServerConnection implements vscode.Disposable {
         this.host.log.warn(`Stopping the server failed: ${String(err)}`);
       }
     }
+    await killProcess(child);
   }
 
   /**
@@ -5793,27 +5921,35 @@ export class ServerConnection implements vscode.Disposable {
       return 'error';
     }
     const settings = this.host.settings();
-    const serverOptions: ServerOptions = {
-      command: serverPath,
-      args: ['lsp'],
-      options: {
-        env: {
-          ...process.env,
-          RUST_BACKTRACE: '1',
-          CLIPPINGS_LOG: vscode.workspace.getConfiguration('clippings').get<string>('server.logLevel', 'info'),
-        },
-      },
+    const env = {
+      ...process.env,
+      RUST_BACKTRACE: '1',
+      CLIPPINGS_LOG: vscode.workspace.getConfiguration('clippings').get<string>('server.logLevel', 'info'),
+    };
+    // Called for the first start and for each restart after a crash.
+    let child: ChildProcess | undefined;
+    const serverOptions: ServerOptions = () => {
+      child = spawn(serverPath, ['lsp'], { env, windowsHide: true });
+      if (this.client === client) this.process = child;
+      return Promise.resolve(child);
     };
     // Set while `startOnce` waits for this client; a start failure after that
     // comes from the client restarting a crashed server.
     let waiting: ((outcome: 'failed') => void) | undefined;
     const failed = new Promise<'failed'>((resolve) => (waiting = resolve));
+    // Each start, first or after a crash, must reach the running state in time.
+    let watchdog: NodeJS.Timeout | undefined;
+    let abandoned = false;
+    const startFailed = (reason: string) => {
+      if (abandoned) return;
+      abandoned = true;
+      clearTimeout(watchdog);
+      log.error(reason);
+      if (waiting) waiting('failed');
+      else void this.afterStartFailure(client, child);
+    };
     const policy = new CrashPolicy(this.crashes, {
-      startFailed: () => {
-        log.error('The server exited while starting.');
-        if (waiting) waiting('failed');
-        else void this.afterStartFailure(client);
-      },
+      startFailed: () => startFailed('The server exited while starting.'),
       gaveUp: (message) => void this.showCrash(message),
     });
     const clientOptions: LanguageClientOptions = {
@@ -5834,38 +5970,52 @@ export class ServerConnection implements vscode.Disposable {
     client.onNotification(m.Styles, (p) => this.emitters.styles.fire(p));
     client.onNotification(m.Decorations, (p) => this.emitters.decorations.fire(p));
     client.onDidChangeState((e) => {
+      clearTimeout(watchdog);
+      if (e.newState === State.Starting) {
+        const seconds = this.startTimeoutMs / 1000;
+        watchdog = setTimeout(
+          () => startFailed(`The server did not finish starting within ${seconds} s.`),
+          this.startTimeoutMs,
+        );
+      }
       policy.setRunning(e.newState === State.Running);
       if (e.newState === State.Running && this.client === client) this.onClientRunning(client);
     });
     this.client = client;
-    // When the server exits during `initialize`, `start()` may never settle;
-    // the policy's start failure settles the race instead.
+    // When the server exits or hangs during `initialize`, `start()` may never
+    // settle; a start failure settles the race instead.
     const started = client.start().then(() => 'started' as const);
     started.catch(() => undefined);
     try {
       const outcome = await Promise.race([started, failed]);
-      if (outcome === 'failed') await this.discard(client);
+      if (outcome === 'failed') await this.discard(client, child);
       return outcome;
     } catch (err) {
+      // `initialize` failed or the connection closed under it: a start failure.
+      abandoned = true;
+      clearTimeout(watchdog);
       log.error(`The server failed to start: ${String(err)}`);
-      await this.discard(client);
-      void this.showError(`Clippings: the server failed to start. ${err instanceof Error ? err.message : ''}`, false);
-      return 'error';
+      await this.discard(client, child);
+      return 'failed';
     } finally {
       waiting = undefined;
     }
   }
 
-  /** A crashed server that the client restarted then exited while starting. */
-  private async afterStartFailure(client: LanguageClient): Promise<void> {
-    await this.discard(client);
+  /** A crashed server that the client restarted, then failed to start. */
+  private async afterStartFailure(client: LanguageClient, child: ChildProcess | undefined): Promise<void> {
+    await this.discard(client, child);
     if (this.crashes.record(Date.now()) === 'give up') void this.showCrash(GIVE_UP_MESSAGE);
     else void this.start();
   }
 
-  /** Forgets a client whose server is gone; it cannot be started again. */
-  private async discard(client: LanguageClient): Promise<void> {
-    if (this.client === client) this.client = undefined;
+  /** Forgets a client whose server failed; it cannot be started again. */
+  private async discard(client: LanguageClient, child: ChildProcess | undefined): Promise<void> {
+    if (this.client === client) {
+      this.client = undefined;
+      this.process = undefined;
+    }
+    await killProcess(child);
     try {
       await client.dispose(2000);
     } catch {
@@ -5941,6 +6091,20 @@ export class ServerConnection implements vscode.Disposable {
     for (const e of Object.values(this.emitters)) e.dispose();
   }
 }
+
+/** Ends a server process that did not exit by itself: SIGTERM, then SIGKILL. */
+async function killProcess(child: ChildProcess | undefined): Promise<void> {
+  if (!child) return;
+  const exited = () => child.exitCode !== null || child.signalCode !== null;
+  for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+    if (exited()) return;
+    const exit = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill(signal);
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([exit, new Promise<void>((resolve) => (timer = setTimeout(resolve, KILL_WAIT_MS)))]);
+    clearTimeout(timer);
+  }
+}
 ```
 
 Replace `extension/src/testApi.ts` with:
@@ -5960,6 +6124,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -6057,6 +6223,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -6086,7 +6253,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `38 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `11 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `12 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -6583,6 +6750,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -6702,6 +6871,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -6734,7 +6904,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `43 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `15 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `16 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -7176,6 +7346,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -7318,6 +7490,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -7351,7 +7524,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `43 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `19 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `20 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -7697,10 +7870,11 @@ Replace `extension/src/test/integration/server.test.ts` with:
 
 ```ts
 import * as assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { START_TIMEOUT_MS } from '../../server/connection';
 import type { ClippingsApi } from '../../testApi';
 import { DEFAULT_TREE } from './fixture';
 import { getApi, treeBecomes, waitFor, whenIdle, withTimeout } from './helpers';
@@ -7820,6 +7994,58 @@ describe('server lifecycle', () => {
       assert.deepEqual(shown, { kind: 'error', message, actions: ['Restart', 'Show Log'] });
     } finally {
       process.env['CLIPPINGS_SERVER_PATH'] = real;
+      subscription.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const restart = vscode.commands.executeCommand('clippings.restartServer');
+    await withTimeout('Restart Server with the real server', restart);
+    await whenIdle(api);
+    assert.ok(s.running);
+    await treeBecomes(api, DEFAULT_TREE);
+  });
+
+  it('counts a server that does not finish starting in time as a crash and kills it', async function () {
+    if (process.platform === 'win32') this.skip();
+    this.timeout(60_000);
+    const s = api.test.server;
+    // Passes the probe, then reads `initialize` and never answers.
+    const dir = mkdtempSync(join(tmpdir(), 'clippings-fake-'));
+    const fake = join(dir, 'clippings');
+    const pids = join(dir, 'pids');
+    writeFileSync(
+      fake,
+      [
+        '#!/bin/sh',
+        'if [ "$1" = probe ]; then',
+        '  echo \'{"version":"0.0.0","target":"fake","protocolVersion":1}\'',
+        '  exit 0',
+        'fi',
+        `echo $$ >> '${pids}'`,
+        // Keeps stdout open on fd 3 while discarding the requests.
+        'exec cat 3>&1 > /dev/null',
+        '',
+      ].join('\n'),
+    );
+    chmodSync(fake, 0o755);
+    const real = process.env['CLIPPINGS_SERVER_PATH'];
+    let notice: string | undefined;
+    const subscription = s.onGaveUp((message) => (notice = message));
+    try {
+      process.env['CLIPPINGS_SERVER_PATH'] = fake;
+      s.setStartTimeout(500);
+      const restart = vscode.commands.executeCommand('clippings.restartServer');
+      await withTimeout('Restart Server with a server that hangs', restart);
+      const message = await waitFor('the crash notice', () => notice, [s.onGaveUp]);
+      assert.match(message, /crashed 5 times in the last 3 minutes/);
+      assert.equal(s.running, false);
+      const started = readFileSync(pids, 'utf8').trim().split('\n').map(Number);
+      assert.equal(started.length, 5, 'five attempts');
+      for (const pid of started) assert.throws(() => process.kill(pid, 0), /ESRCH/, `server process ${pid} is gone`);
+      const shown = api.test.prompts.shown.at(-1);
+      assert.deepEqual(shown, { kind: 'error', message, actions: ['Restart', 'Show Log'] });
+    } finally {
+      process.env['CLIPPINGS_SERVER_PATH'] = real;
+      s.setStartTimeout(START_TIMEOUT_MS);
       subscription.dispose();
       rmSync(dir, { recursive: true, force: true });
     }
@@ -8407,6 +8633,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -8560,6 +8788,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -8593,7 +8822,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `50 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `35 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `36 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -9094,6 +9323,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -9127,7 +9357,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `52 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `39 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `40 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -9496,6 +9726,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -9665,6 +9897,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -9698,7 +9931,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `57 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `43 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `44 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -10132,6 +10365,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -10309,6 +10544,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -10342,7 +10578,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `62 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `51 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `52 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -11039,6 +11275,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -11247,6 +11485,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -11280,7 +11519,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `68 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `56 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `57 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -11815,6 +12054,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -12040,6 +12281,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -12073,7 +12315,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `75 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `60 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `61 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -12162,7 +12404,7 @@ describe('export', () => {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `pnpm -C extension dev && pnpm -C extension typecheck && pnpm -C extension build && pnpm -C extension test:integration`
-Expected: FAIL. `60 passing`, `2 failing`, each with `Error: command 'clippings.exportTree' not found`. A VS Code test window opens, runs the suite and closes.
+Expected: FAIL. `61 passing`, `2 failing`, each with `Error: command 'clippings.exportTree' not found`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -12402,6 +12644,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -12435,7 +12678,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `75 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `62 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `63 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -12875,6 +13118,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -13111,6 +13356,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -13144,7 +13390,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `79 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `64 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `65 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -13520,6 +13766,8 @@ export interface ServerHooks {
   readonly onRunning: vscode.Event<void>;
   /** Fires when repeated crashes stop the automatic restarts (spec 7.4). */
   readonly onGaveUp: vscode.Event<string>;
+  /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
+  setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
 }
 
@@ -13760,6 +14008,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -13795,7 +14044,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `79 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `67 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `68 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -13933,7 +14182,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `81 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `67 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `68 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -14000,10 +14249,11 @@ Replace `extension/src/test/integration/server.test.ts` with:
 
 ```ts
 import * as assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { START_TIMEOUT_MS } from '../../server/connection';
 import type { ClippingsApi } from '../../testApi';
 import { DEFAULT_TREE } from './fixture';
 import { getApi, setSetting, treeBecomes, waitFor, whenIdle, withTimeout } from './helpers';
@@ -14123,6 +14373,58 @@ describe('server lifecycle', () => {
       assert.deepEqual(shown, { kind: 'error', message, actions: ['Restart', 'Show Log'] });
     } finally {
       process.env['CLIPPINGS_SERVER_PATH'] = real;
+      subscription.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const restart = vscode.commands.executeCommand('clippings.restartServer');
+    await withTimeout('Restart Server with the real server', restart);
+    await whenIdle(api);
+    assert.ok(s.running);
+    await treeBecomes(api, DEFAULT_TREE);
+  });
+
+  it('counts a server that does not finish starting in time as a crash and kills it', async function () {
+    if (process.platform === 'win32') this.skip();
+    this.timeout(60_000);
+    const s = api.test.server;
+    // Passes the probe, then reads `initialize` and never answers.
+    const dir = mkdtempSync(join(tmpdir(), 'clippings-fake-'));
+    const fake = join(dir, 'clippings');
+    const pids = join(dir, 'pids');
+    writeFileSync(
+      fake,
+      [
+        '#!/bin/sh',
+        'if [ "$1" = probe ]; then',
+        '  echo \'{"version":"0.0.0","target":"fake","protocolVersion":1}\'',
+        '  exit 0',
+        'fi',
+        `echo $$ >> '${pids}'`,
+        // Keeps stdout open on fd 3 while discarding the requests.
+        'exec cat 3>&1 > /dev/null',
+        '',
+      ].join('\n'),
+    );
+    chmodSync(fake, 0o755);
+    const real = process.env['CLIPPINGS_SERVER_PATH'];
+    let notice: string | undefined;
+    const subscription = s.onGaveUp((message) => (notice = message));
+    try {
+      process.env['CLIPPINGS_SERVER_PATH'] = fake;
+      s.setStartTimeout(500);
+      const restart = vscode.commands.executeCommand('clippings.restartServer');
+      await withTimeout('Restart Server with a server that hangs', restart);
+      const message = await waitFor('the crash notice', () => notice, [s.onGaveUp]);
+      assert.match(message, /crashed 5 times in the last 3 minutes/);
+      assert.equal(s.running, false);
+      const started = readFileSync(pids, 'utf8').trim().split('\n').map(Number);
+      assert.equal(started.length, 5, 'five attempts');
+      for (const pid of started) assert.throws(() => process.kill(pid, 0), /ESRCH/, `server process ${pid} is gone`);
+      const shown = api.test.prompts.shown.at(-1);
+      assert.deepEqual(shown, { kind: 'error', message, actions: ['Restart', 'Show Log'] });
+    } finally {
+      process.env['CLIPPINGS_SERVER_PATH'] = real;
+      s.setStartTimeout(START_TIMEOUT_MS);
       subscription.dispose();
       rmSync(dir, { recursive: true, force: true });
     }
@@ -14355,6 +14657,7 @@ Replace `extension/src/server/connection.ts` with:
 // demand or after a crash. Everything else talks to the server through this
 // class.
 
+import { spawn, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import { LanguageClient, State, type LanguageClientOptions, type ServerOptions } from 'vscode-languageclient/node';
 import { documentSelector } from '../config/schemes';
@@ -14377,6 +14680,11 @@ import { locateServer } from './locate';
 import * as m from './messages';
 import { ResolutionError } from './resolve';
 
+/** How long a server may take to finish starting before it counts as a crash. */
+export const START_TIMEOUT_MS = 10_000;
+/** How long to wait for a killed server process to exit, per signal. */
+const KILL_WAIT_MS = 2000;
+
 export interface ConnectionHost {
   readonly context: vscode.ExtensionContext;
   readonly log: vscode.LogOutputChannel;
@@ -14390,9 +14698,17 @@ export interface ConnectionHost {
 
 export class ServerConnection implements vscode.Disposable {
   private client: LanguageClient | undefined;
+  /**
+   * The current client's server process. Clippings spawns it itself: the
+   * language client forgets its process once the connection closes, and a
+   * server that closed its output can still be alive and must be killed.
+   */
+  private process: ChildProcess | undefined;
   private starting: Promise<void> | undefined;
   /** Crashes and start failures across every client of this connection. */
   private readonly crashes = new CrashHistory();
+  /** `START_TIMEOUT_MS`; tests shorten it. */
+  startTimeoutMs = START_TIMEOUT_MS;
   private readonly emitters = {
     gaveUp: new vscode.EventEmitter<string>(),
     status: new vscode.EventEmitter<StatusParams>(),
@@ -14432,7 +14748,7 @@ export class ServerConnection implements vscode.Disposable {
 
   /** The server process ID, for tests. */
   get pid(): number | undefined {
-    return this.client?.serverProcess?.pid;
+    return this.client ? this.process?.pid : undefined;
   }
 
   start(): Promise<void> {
@@ -14450,7 +14766,9 @@ export class ServerConnection implements vscode.Disposable {
 
   async stop(): Promise<void> {
     const client = this.client;
+    const child = this.process;
     this.client = undefined;
+    this.process = undefined;
     if (client) {
       try {
         await client.dispose(2000);
@@ -14458,6 +14776,7 @@ export class ServerConnection implements vscode.Disposable {
         this.host.log.warn(`Stopping the server failed: ${String(err)}`);
       }
     }
+    await killProcess(child);
   }
 
   /**
@@ -14486,27 +14805,35 @@ export class ServerConnection implements vscode.Disposable {
       return 'error';
     }
     const settings = this.host.settings();
-    const serverOptions: ServerOptions = {
-      command: serverPath,
-      args: ['lsp'],
-      options: {
-        env: {
-          ...process.env,
-          RUST_BACKTRACE: '1',
-          CLIPPINGS_LOG: vscode.workspace.getConfiguration('clippings').get<string>('server.logLevel', 'info'),
-        },
-      },
+    const env = {
+      ...process.env,
+      RUST_BACKTRACE: '1',
+      CLIPPINGS_LOG: vscode.workspace.getConfiguration('clippings').get<string>('server.logLevel', 'info'),
+    };
+    // Called for the first start and for each restart after a crash.
+    let child: ChildProcess | undefined;
+    const serverOptions: ServerOptions = () => {
+      child = spawn(serverPath, ['lsp'], { env, windowsHide: true });
+      if (this.client === client) this.process = child;
+      return Promise.resolve(child);
     };
     // Set while `startOnce` waits for this client; a start failure after that
     // comes from the client restarting a crashed server.
     let waiting: ((outcome: 'failed') => void) | undefined;
     const failed = new Promise<'failed'>((resolve) => (waiting = resolve));
+    // Each start, first or after a crash, must reach the running state in time.
+    let watchdog: NodeJS.Timeout | undefined;
+    let abandoned = false;
+    const startFailed = (reason: string) => {
+      if (abandoned) return;
+      abandoned = true;
+      clearTimeout(watchdog);
+      log.error(reason);
+      if (waiting) waiting('failed');
+      else void this.afterStartFailure(client, child);
+    };
     const policy = new CrashPolicy(this.crashes, {
-      startFailed: () => {
-        log.error('The server exited while starting.');
-        if (waiting) waiting('failed');
-        else void this.afterStartFailure(client);
-      },
+      startFailed: () => startFailed('The server exited while starting.'),
       gaveUp: (message) => void this.showCrash(message),
     });
     const clientOptions: LanguageClientOptions = {
@@ -14528,38 +14855,52 @@ export class ServerConnection implements vscode.Disposable {
     client.onNotification(m.Styles, (p) => this.emitters.styles.fire(p));
     client.onNotification(m.Decorations, (p) => this.emitters.decorations.fire(p));
     client.onDidChangeState((e) => {
+      clearTimeout(watchdog);
+      if (e.newState === State.Starting) {
+        const seconds = this.startTimeoutMs / 1000;
+        watchdog = setTimeout(
+          () => startFailed(`The server did not finish starting within ${seconds} s.`),
+          this.startTimeoutMs,
+        );
+      }
       policy.setRunning(e.newState === State.Running);
       if (e.newState === State.Running && this.client === client) this.onClientRunning(client);
     });
     this.client = client;
-    // When the server exits during `initialize`, `start()` may never settle;
-    // the policy's start failure settles the race instead.
+    // When the server exits or hangs during `initialize`, `start()` may never
+    // settle; a start failure settles the race instead.
     const started = client.start().then(() => 'started' as const);
     started.catch(() => undefined);
     try {
       const outcome = await Promise.race([started, failed]);
-      if (outcome === 'failed') await this.discard(client);
+      if (outcome === 'failed') await this.discard(client, child);
       return outcome;
     } catch (err) {
+      // `initialize` failed or the connection closed under it: a start failure.
+      abandoned = true;
+      clearTimeout(watchdog);
       log.error(`The server failed to start: ${String(err)}`);
-      await this.discard(client);
-      void this.showError(`Clippings: the server failed to start. ${err instanceof Error ? err.message : ''}`, false);
-      return 'error';
+      await this.discard(client, child);
+      return 'failed';
     } finally {
       waiting = undefined;
     }
   }
 
-  /** A crashed server that the client restarted then exited while starting. */
-  private async afterStartFailure(client: LanguageClient): Promise<void> {
-    await this.discard(client);
+  /** A crashed server that the client restarted, then failed to start. */
+  private async afterStartFailure(client: LanguageClient, child: ChildProcess | undefined): Promise<void> {
+    await this.discard(client, child);
     if (this.crashes.record(Date.now()) === 'give up') void this.showCrash(GIVE_UP_MESSAGE);
     else void this.start();
   }
 
-  /** Forgets a client whose server is gone; it cannot be started again. */
-  private async discard(client: LanguageClient): Promise<void> {
-    if (this.client === client) this.client = undefined;
+  /** Forgets a client whose server failed; it cannot be started again. */
+  private async discard(client: LanguageClient, child: ChildProcess | undefined): Promise<void> {
+    if (this.client === client) {
+      this.client = undefined;
+      this.process = undefined;
+    }
+    await killProcess(child);
     try {
       await client.dispose(2000);
     } catch {
@@ -14633,6 +14974,20 @@ export class ServerConnection implements vscode.Disposable {
     this.trust.dispose();
     void this.stop();
     for (const e of Object.values(this.emitters)) e.dispose();
+  }
+}
+
+/** Ends a server process that did not exit by itself: SIGTERM, then SIGKILL. */
+async function killProcess(child: ChildProcess | undefined): Promise<void> {
+  if (!child) return;
+  const exited = () => child.exitCode !== null || child.signalCode !== null;
+  for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+    if (exited()) return;
+    const exit = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill(signal);
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([exit, new Promise<void>((resolve) => (timer = setTimeout(resolve, KILL_WAIT_MS)))]);
+    clearTimeout(timer);
   }
 }
 ```
@@ -14886,6 +15241,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onStatus: server.onStatus,
         onRunning: server.onRunning,
         onGaveUp: server.onGaveUp,
+        setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
       },
       tree: {
@@ -14926,7 +15282,7 @@ Run: `pnpm -C extension test:unit`
 Expected: `83 passing`.
 
 Run: `pnpm -C extension test:integration`
-Expected: `68 passing`. A VS Code test window opens, runs the suite and closes.
+Expected: `69 passing`. A VS Code test window opens, runs the suite and closes.
 
 - [ ] **Step 5: Commit**
 
@@ -14959,7 +15315,7 @@ The edits, section by section:
 4. **Section 7.1**: every command's category is `Clippings` and the Marketplace category is `Other` (ruling 22); the container icon is Clippings' own drawing (ruling 4).
 5. **Section 7.2**: `general.revealBehaviour` keeps three values (ruling 21); the settings UI groups for the new settings (ruling 15).
 6. **Section 7.3**: the offer and completion texts, and skipped values logged (ruling 16).
-7. **Section 7.4**: a workspace `server.path` in an untrusted workspace, and the restart on granting trust (ruling 23); `CLIPPINGS_LOG` in the spawn environment (ruling 18); the crash notice replaces the language client's own, a server that fails to start counts as a crash, and Restart Server forgets past crashes (ruling 28); a new Malformed settings paragraph (ruling 24).
+7. **Section 7.4**: a workspace `server.path` in an untrusted workspace, and the restart on granting trust (ruling 23); `CLIPPINGS_LOG` in the spawn environment (ruling 18); the crash notice replaces the language client's own, a server that exits before it is running or does not finish starting within 10 seconds counts as a crash and its process is killed, and Restart Server forgets past crashes (ruling 28); a new Malformed settings paragraph (ruling 24).
 8. **Section 7.5**: when the epoch bumps, and that it survives `resetCache` (rulings 8 and 9); `clippings.reveal` only while the view is visible (ruling 6); track file cancels a pending reveal (ruling 7).
 9. **Section 7.6**: menu clauses test `view == clippings-view`, and the Show Tree View clause is parenthesised (ruling 20); a Folder and file filters paragraph on paths, escaping and Reset All Filters (rulings 2, 10 and 11).
 10. **Section 7.7**: the scanning and interrupted texts (ruling 25); Clippings' own icon artwork and why (ruling 4); which icon names are checked (ruling 5).
@@ -14974,7 +15330,7 @@ Apply this diff to `docs/superpowers/specs/2026-09-23-clippings-design.md` with 
 
 ```diff
 diff --git a/docs/superpowers/specs/2026-09-23-clippings-design.md b/docs/superpowers/specs/2026-09-23-clippings-design.md
-index fbc5a68..076b090 100644
+index fbc5a68..8c4b8a9 100644
 --- a/docs/superpowers/specs/2026-09-23-clippings-design.md
 +++ b/docs/superpowers/specs/2026-09-23-clippings-design.md
 @@ -338,7 +338,6 @@ Transport: JSON-RPC over stdio. The server uses the `lsp-server` crate. The clie
@@ -15060,7 +15416,7 @@ index fbc5a68..076b090 100644
 +**Spawn**: `clippings lsp` through the language client, with `RUST_BACKTRACE=1` and `CLIPPINGS_LOG` set to `server.logLevel` in the environment. stdout carries JSON-RPC only and stderr goes to the Clippings output channel. The server exits when stdin closes.
  
 -**Crashes**: a custom error handler restarts the server after each crash until five crashes occur within three minutes. It then stops and shows a notification with Restart and Show Log. The client discards its caches when it sees a new server instance (section 6.2).
-+**Crashes**: a custom error handler restarts the server after each crash until five crashes occur within three minutes. It then stops and shows a notification with Restart and Show Log, in place of the language client's own. A server that fails to start counts as a crash: when it exits before it is running, the client discards that language client and starts a fresh one, until the same limit, so a server that always fails at startup stops after five attempts. `clippings.restartServer` forgets past crashes. The client discards its caches when it sees a new server instance (section 6.2).
++**Crashes**: a custom error handler restarts the server after each crash until five crashes occur within three minutes. It then stops and shows a notification with Restart and Show Log, in place of the language client's own. A server that fails to start counts as a crash: when it exits before it is running, or does not finish starting within 10 seconds, the client kills its process, discards that language client and starts a fresh one, until the same limit, so a server that always fails at startup stops after five attempts. `clippings.restartServer` forgets past crashes. The client discards its caches when it sees a new server instance (section 6.2).
  
  **Restarts**: `clippings.restartServer` restarts on demand. A change to `general.schemes`, `server.path`, `server.logLevel` or `trace.server` restarts the client, because the document selector and spawn environment are fixed at start.
  
