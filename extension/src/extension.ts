@@ -12,6 +12,8 @@ import { registerSettingCommands } from './commands/settings';
 import { registerViewCommands } from './commands/view';
 import { affectsServer, readConfiguration } from './config/read';
 import { ConfigurationSync, replacesTree } from './config/sync';
+import { ContextKeys } from './context/apply';
+import { contextValues } from './context/keys';
 import { SettingWriter } from './config/writes';
 import { IconResolver } from './icons/resolver';
 import type { StatusParams } from './protocol';
@@ -46,6 +48,10 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     (settings) => server.configure(settings),
   );
   let lastStatus: StatusParams | undefined;
+  const contextKeys = new ContextKeys();
+  const updateContext = () => void contextKeys.apply(contextValues(sync.current, lastStatus));
+  sync.onPush(updateContext);
+  updateContext();
 
   const cache = new NodeCache();
   const expansion = new Expansion(store);
@@ -81,6 +87,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     ...registerScanCommands(server),
     server.onStatus((s) => {
       lastStatus = s;
+      updateContext();
       treeView.message = s.needsScan && !s.scanning ? NEEDS_SCAN_MESSAGE : undefined;
     }),
     server.onNewInstance(() => provider.reset()),
@@ -115,6 +122,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     test: {
       prompts,
       viewState: () => store.snapshot(),
+      contextKeys: () => contextKeys.values,
       server: {
         get running() {
           return server.running;

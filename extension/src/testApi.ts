@@ -35,6 +35,8 @@ export interface TestHooks {
   /** Answers prompts and records messages. */
   readonly prompts: Prompts;
   viewState(): PersistedViewState;
+  /** The context keys last set (spec 7.6). */
+  contextKeys(): Readonly<Record<string, boolean | string>>;
   readonly server: ServerHooks;
   readonly tree: TreeHooks;
 }
