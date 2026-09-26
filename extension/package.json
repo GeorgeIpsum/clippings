@@ -1,0 +1,1320 @@
+{
+  "name": "clippings",
+  "displayName": "Clippings",
+  "description": "Fast TODO tree backed by a Rust language server, with todo-tree's features and settings.",
+  "version": "0.1.0",
+  "publisher": "clippings-dev",
+  "license": "MIT",
+  "private": true,
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "todo",
+    "fixme",
+    "tasks",
+    "tree",
+    "highlight"
+  ],
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "The server binary path setting is ignored in untrusted workspaces.",
+      "restrictedConfigurations": [
+        "clippings.server.path"
+      ]
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "clippings",
+          "title": "TODOs",
+          "icon": "resources/clippings-container.svg"
+        }
+      ]
+    },
+    "views": {
+      "clippings": [
+        {
+          "id": "clippings-view",
+          "name": "TODOs",
+          "when": "!clippings-is-empty"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "clippings.exportTree",
+          "when": "view == clippings-view && clippings-show-export-button == true",
+          "group": "navigation@1"
+        },
+        {
+          "command": "clippings.reveal",
+          "when": "view == clippings-view && clippings-tags-only == false && clippings-show-reveal-button == true",
+          "group": "navigation@2"
+        },
+        {
+          "command": "clippings.scanOpenFilesOnly",
+          "when": "view == clippings-view && clippings-scan-mode == 'workspace only' && clippings-show-scan-mode-button == true",
+          "group": "navigation@3"
+        },
+        {
+          "command": "clippings.scanCurrentFileOnly",
+          "when": "view == clippings-view && clippings-scan-mode == 'open files' && clippings-show-scan-mode-button == true",
+          "group": "navigation@3"
+        },
+        {
+          "command": "clippings.scanWorkspaceAndOpenFiles",
+          "when": "view == clippings-view && clippings-scan-mode == 'current file' && clippings-show-scan-mode-button == true",
+          "group": "navigation@3"
+        },
+        {
+          "command": "clippings.scanWorkspaceOnly",
+          "when": "view == clippings-view && clippings-scan-mode == 'workspace' && clippings-show-scan-mode-button == true",
+          "group": "navigation@3"
+        },
+        {
+          "command": "clippings.showFlatView",
+          "when": "view == clippings-view && clippings-flat == false && clippings-tags-only == false && clippings-show-view-style-button == true",
+          "group": "navigation@4"
+        },
+        {
+          "command": "clippings.showTagsOnlyView",
+          "when": "view == clippings-view && clippings-flat == true && clippings-tags-only == false && clippings-show-view-style-button == true",
+          "group": "navigation@4"
+        },
+        {
+          "command": "clippings.showTreeView",
+          "when": "view == clippings-view && clippings-flat == false && clippings-tags-only == true && clippings-show-view-style-button == true",
+          "group": "navigation@4"
+        },
+        {
+          "command": "clippings.groupByTag",
+          "when": "view == clippings-view && clippings-grouped-by-tag == false && clippings-show-group-by-tag-button == true",
+          "group": "navigation@5"
+        },
+        {
+          "command": "clippings.ungroupByTag",
+          "when": "view == clippings-view && clippings-grouped-by-tag == true && clippings-show-group-by-tag-button == true",
+          "group": "navigation@5"
+        },
+        {
+          "command": "clippings.groupBySubTag",
+          "when": "view == clippings-view && clippings-grouped-by-sub-tag == false && clippings-show-group-by-sub-tag-button == true && clippings-has-sub-tags == true",
+          "group": "navigation@6"
+        },
+        {
+          "command": "clippings.ungroupBySubTag",
+          "when": "view == clippings-view && clippings-grouped-by-sub-tag == true && clippings-show-group-by-sub-tag-button == true && clippings-has-sub-tags == true",
+          "group": "navigation@6"
+        },
+        {
+          "command": "clippings.filter",
+          "when": "view == clippings-view && clippings-filtered == false && clippings-show-filter-button == true",
+          "group": "navigation@7"
+        },
+        {
+          "command": "clippings.filterClear",
+          "when": "view == clippings-view && clippings-filtered == true && clippings-show-filter-button == true",
+          "group": "navigation@7"
+        },
+        {
+          "command": "clippings.refresh",
+          "when": "view == clippings-view && clippings-show-refresh-button == true",
+          "group": "navigation@8"
+        },
+        {
+          "command": "clippings.expand",
+          "when": "view == clippings-view && clippings-expanded == false && clippings-show-expand-button == true",
+          "group": "navigation@9"
+        },
+        {
+          "command": "clippings.collapse",
+          "when": "view == clippings-view && clippings-expanded == true && clippings-show-expand-button == true",
+          "group": "navigation@9"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "clippings.filter",
+          "when": "view == clippings-view && clippings-filtered == false",
+          "group": "1-filters@1"
+        },
+        {
+          "command": "clippings.filterClear",
+          "when": "view == clippings-view && clippings-global-filter-active",
+          "group": "1-filters@2"
+        },
+        {
+          "command": "clippings.excludeThisFolder",
+          "when": "view == clippings-view && viewItem == folder",
+          "group": "1-filters@3"
+        },
+        {
+          "command": "clippings.excludeThisFile",
+          "when": "view == clippings-view && viewItem == file",
+          "group": "1-filters@4"
+        },
+        {
+          "command": "clippings.showOnlyThisFolder",
+          "when": "view == clippings-view && viewItem == folder",
+          "group": "1-filters@5"
+        },
+        {
+          "command": "clippings.showOnlyThisFolderAndSubfolders",
+          "when": "view == clippings-view && viewItem == folder",
+          "group": "1-filters@6"
+        },
+        {
+          "command": "clippings.removeFilter",
+          "when": "view == clippings-view && clippings-folder-filter-active",
+          "group": "1-filters@7"
+        },
+        {
+          "command": "clippings.resetAllFilters",
+          "when": "view == clippings-view && clippings-folder-filter-active",
+          "group": "1-filters@8"
+        },
+        {
+          "command": "clippings.toggleItemCounts",
+          "when": "view == clippings-view",
+          "group": "2-toggles"
+        },
+        {
+          "command": "clippings.toggleBadges",
+          "when": "view == clippings-view",
+          "group": "2-toggles"
+        },
+        {
+          "command": "clippings.toggleCompactFolders",
+          "when": "view == clippings-view && clippings-can-toggle-compact-folders == true",
+          "group": "2-toggles"
+        },
+        {
+          "command": "clippings.scanOpenFilesOnly",
+          "when": "view == clippings-view && clippings-scan-mode != 'open files'",
+          "group": "3-view"
+        },
+        {
+          "command": "clippings.scanCurrentFileOnly",
+          "when": "view == clippings-view && clippings-scan-mode != 'current file'",
+          "group": "3-view"
+        },
+        {
+          "command": "clippings.scanWorkspaceAndOpenFiles",
+          "when": "view == clippings-view && clippings-scan-mode != 'workspace'",
+          "group": "3-view"
+        },
+        {
+          "command": "clippings.scanWorkspaceOnly",
+          "when": "view == clippings-view && clippings-scan-mode != 'workspace only'",
+          "group": "3-view"
+        },
+        {
+          "command": "clippings.expand",
+          "when": "view == clippings-view && clippings-expanded == false",
+          "group": "4-tree@1"
+        },
+        {
+          "command": "clippings.collapse",
+          "when": "view == clippings-view && clippings-expanded == true",
+          "group": "4-tree@1"
+        },
+        {
+          "command": "clippings.showFlatView",
+          "when": "view == clippings-view && clippings-flat == false",
+          "group": "4-tree@2"
+        },
+        {
+          "command": "clippings.showTagsOnlyView",
+          "when": "view == clippings-view && clippings-tags-only == false",
+          "group": "4-tree@3"
+        },
+        {
+          "command": "clippings.showTreeView",
+          "when": "view == clippings-view && (clippings-flat == true || clippings-tags-only == true)",
+          "group": "4-tree@4"
+        },
+        {
+          "command": "clippings.groupByTag",
+          "when": "view == clippings-view && clippings-grouped-by-tag == false",
+          "group": "4-tree@5"
+        },
+        {
+          "command": "clippings.ungroupByTag",
+          "when": "view == clippings-view && clippings-grouped-by-tag == true",
+          "group": "4-tree@5"
+        },
+        {
+          "command": "clippings.groupBySubTag",
+          "when": "view == clippings-view && clippings-grouped-by-sub-tag == false && clippings-has-sub-tags == true",
+          "group": "4-tree@6"
+        },
+        {
+          "command": "clippings.ungroupBySubTag",
+          "when": "view == clippings-view && clippings-grouped-by-sub-tag == true && clippings-has-sub-tags == true",
+          "group": "4-tree@6"
+        },
+        {
+          "command": "clippings.exportTree",
+          "when": "view == clippings-view",
+          "group": "5-misc1"
+        },
+        {
+          "command": "clippings.reveal",
+          "when": "view == clippings-view",
+          "group": "6-misc2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "clippings.showOnlyThisFolder",
+          "when": "false"
+        },
+        {
+          "command": "clippings.showOnlyThisFolderAndSubfolders",
+          "when": "false"
+        },
+        {
+          "command": "clippings.excludeThisFolder",
+          "when": "false"
+        },
+        {
+          "command": "clippings.excludeThisFile",
+          "when": "false"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "clippings.showFlatView",
+        "title": "Show Flat View",
+        "category": "Clippings",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "clippings.showTagsOnlyView",
+        "title": "Show Tags Only View",
+        "category": "Clippings",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "clippings.showTreeView",
+        "title": "Show Tree View",
+        "category": "Clippings",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "clippings.refresh",
+        "title": "Refresh",
+        "category": "Clippings",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "clippings.expand",
+        "title": "Expand Tree",
+        "category": "Clippings",
+        "icon": "$(expand-all)",
+        "enablement": "clippings-collapsible"
+      },
+      {
+        "command": "clippings.collapse",
+        "title": "Collapse Tree",
+        "category": "Clippings",
+        "icon": "$(collapse-all)",
+        "enablement": "clippings-collapsible"
+      },
+      {
+        "command": "clippings.filter",
+        "title": "Filter Tree",
+        "category": "Clippings",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "clippings.filterClear",
+        "title": "Clear Tree Filter",
+        "category": "Clippings",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "clippings.groupByTag",
+        "title": "Group by Tag",
+        "category": "Clippings",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "clippings.ungroupByTag",
+        "title": "Ungroup by Tag",
+        "category": "Clippings",
+        "icon": "$(unfold)"
+      },
+      {
+        "command": "clippings.groupBySubTag",
+        "title": "Group by Sub Tag",
+        "category": "Clippings",
+        "icon": "$(chrome-restore)"
+      },
+      {
+        "command": "clippings.ungroupBySubTag",
+        "title": "Ungroup by Sub Tag",
+        "category": "Clippings",
+        "icon": "$(chrome-maximize)"
+      },
+      {
+        "command": "clippings.scanOpenFilesOnly",
+        "title": "Scan Open Files Only",
+        "category": "Clippings",
+        "icon": "$(files)"
+      },
+      {
+        "command": "clippings.scanCurrentFileOnly",
+        "title": "Scan Current File Only",
+        "category": "Clippings",
+        "icon": "$(symbol-file)"
+      },
+      {
+        "command": "clippings.scanWorkspaceAndOpenFiles",
+        "title": "Scan Workspace And Open Files",
+        "category": "Clippings",
+        "icon": "$(folder-active)"
+      },
+      {
+        "command": "clippings.scanWorkspaceOnly",
+        "title": "Scan Workspace Only",
+        "category": "Clippings",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "clippings.addTag",
+        "title": "Add Tag",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.removeTag",
+        "title": "Remove Tag",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.exportTree",
+        "title": "Export Tree",
+        "category": "Clippings",
+        "icon": "$(save)"
+      },
+      {
+        "command": "clippings.showOnlyThisFolder",
+        "title": "Only Show This Folder",
+        "category": "Clippings",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "clippings.showOnlyThisFolderAndSubfolders",
+        "title": "Only Show This Folder And Subfolders",
+        "category": "Clippings",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "clippings.switchScope",
+        "title": "Switch Scope",
+        "category": "Clippings",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "clippings.excludeThisFolder",
+        "title": "Hide This Folder",
+        "category": "Clippings",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "clippings.excludeThisFile",
+        "title": "Hide This File",
+        "category": "Clippings",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "clippings.removeFilter",
+        "title": "Remove Filter",
+        "category": "Clippings",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "clippings.resetAllFilters",
+        "title": "Reset All Filters",
+        "category": "Clippings",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "clippings.reveal",
+        "title": "Reveal Current File In Tree",
+        "category": "Clippings",
+        "icon": "$(location)"
+      },
+      {
+        "command": "clippings.resetCache",
+        "title": "Reset Cache",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.toggleItemCounts",
+        "title": "Toggle Item Counts",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.toggleBadges",
+        "title": "Toggle Badges",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.toggleCompactFolders",
+        "title": "Toggle Compact Folders",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.goToNext",
+        "title": "Go To Next",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.goToPrevious",
+        "title": "Go To Previous",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.revealInFile",
+        "title": "Reveal In File",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.importTodoTreeSettings",
+        "title": "Import Settings from Todo Tree",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.restartServer",
+        "title": "Restart Server",
+        "category": "Clippings"
+      },
+      {
+        "command": "clippings.showLog",
+        "title": "Show Log",
+        "category": "Clippings"
+      }
+    ],
+    "configuration": [
+      {
+        "title": "General",
+        "order": 1,
+        "type": "object",
+        "properties": {
+          "clippings.general.automaticGitRefreshInterval": {
+            "default": 0,
+            "markdownDescription": "Polling interval (in seconds) for automatically refreshing the tree when your repository is updated. Set to '0' to disable.",
+            "type": "integer",
+            "scope": "window"
+          },
+          "clippings.general.periodicRefreshInterval": {
+            "default": 0,
+            "markdownDescription": "Periodic refresh interval (in minutes) for automatically refreshing the tree. Set to '0' to disable.",
+            "type": "integer",
+            "scope": "window"
+          },
+          "clippings.general.revealBehaviour": {
+            "default": "start of todo",
+            "enum": [
+              "start of line",
+              "start of todo",
+              "end of todo"
+            ],
+            "markdownDescription": "Sets where the cursor is positioned when revealing a todo.",
+            "markdownEnumDescriptions": [
+              "Moves the cursor to the start of the line",
+              "Moves the cursor to the beginning of the todo",
+              "Moves the cursor to the end of the todo"
+            ],
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.general.exportPath": {
+            "default": "~/todo-tree-%Y%m%d-%H%M.txt",
+            "markdownDescription": "Path to use when exporting the tree. Environment variables will be expanded, e.g `${HOME}` and the path is passed through strftime (see <https://github.com/samsonjs/strftime>). Set the extension to `.json` to export as a JSON record.",
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.general.rootFolder": {
+            "default": "",
+            "markdownDescription": "Folder in which to run the search (defaults to the workspace folder).",
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.general.schemes": {
+            "default": [
+              "file",
+              "ssh",
+              "untitled",
+              "vscode-notebook-cell"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "Editor schemes to find TODOs in. To find TODOs in settings files, for instance, add `vscode-userdata` or for output windows, add `output`.",
+            "type": "array",
+            "scope": "window"
+          },
+          "clippings.general.statusBar": {
+            "default": "none",
+            "enum": [
+              "none",
+              "total",
+              "tags",
+              "top three",
+              "current file"
+            ],
+            "markdownDescription": "What to show in the status bar - nothing, total count, counts per tag, top three counts per tag or count of tags in the current file.",
+            "markdownEnumDescriptions": [
+              "Only show the scanning status in the status bar",
+              "Show the total count of tags in the status bar",
+              "Show a breakdown of the count of each tag in the status bar",
+              "Show the count of the top three tags in the status bar",
+              "Show the count of tags in the current file in the status bar"
+            ],
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.general.showIconsInsteadOfTagsInStatusBar": {
+            "default": false,
+            "markdownDescription": "Show icons instead of tags in the status bar",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.general.statusBarClickBehaviour": {
+            "default": "reveal",
+            "enum": [
+              "cycle",
+              "reveal",
+              "toggle highlights"
+            ],
+            "markdownDescription": "What to do when the status bar is clicked.",
+            "markdownEnumDescriptions": [
+              "Toggle between showing total count and the top three tag counts",
+              "Reveal the tree view",
+              "Toggle highlighting"
+            ],
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.general.tagGroups": {
+            "default": {},
+            "markdownDescription": "Allows similar tags to be grouped under the same type, e.g. `{ \"FIX\": [\"FIXME\",\"FIXIT\"] }`. *Note: All tags must also be in the `clippings.general.tags` tag list. If a tag group is defined, custom highlights apply to the group, not the tags within the group.*",
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "scope": "window"
+          },
+          "clippings.general.tags": {
+            "default": [
+              "BUG",
+              "HACK",
+              "FIXME",
+              "TODO",
+              "XXX",
+              "[ ]",
+              "[x]"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "List of tags. *Note, if one tag starts with another tag, the longer tag should be specified first to prevent the shorter tag being matched.*",
+            "type": "array",
+            "scope": "window"
+          },
+          "clippings.general.showActivityBarBadge": {
+            "default": false,
+            "markdownDescription": "Show a badge in the activity bar indicating the total number of TODOs",
+            "type": "boolean",
+            "scope": "window"
+          }
+        }
+      },
+      {
+        "title": "Highlights",
+        "order": 2,
+        "type": "object",
+        "properties": {
+          "clippings.highlights.customHighlight": {
+            "default": {
+              "BUG": {
+                "icon": "bug"
+              },
+              "HACK": {
+                "icon": "tools"
+              },
+              "FIXME": {
+                "icon": "flame"
+              },
+              "XXX": {
+                "icon": "x"
+              },
+              "[ ]": {
+                "icon": "issue-draft"
+              },
+              "[x]": {
+                "icon": "issue-closed"
+              }
+            },
+            "markdownDescription": "Custom configuration for highlighting, [Read more...](https://github.com/Gruntfuggly/todo-tree#highlighting).",
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "foreground": {
+                  "type": "string",
+                  "format": "color-hex"
+                },
+                "background": {
+                  "type": "string",
+                  "format": "color-hex"
+                },
+                "opacity": {
+                  "type": "number"
+                },
+                "fontWeight": {
+                  "type": "string"
+                },
+                "fontStyle": {
+                  "type": "string"
+                },
+                "textDecoration": {
+                  "type": "string"
+                },
+                "borderRadius": {
+                  "type": "string"
+                },
+                "icon": {
+                  "type": "string"
+                },
+                "iconColour": {
+                  "type": "string",
+                  "format": "color-hex"
+                },
+                "gutterIcon": {
+                  "type": "boolean"
+                },
+                "rulerColour": {
+                  "type": "string",
+                  "format": "color-hex"
+                },
+                "rulerOpacity": {
+                  "type": "number"
+                },
+                "rulerLane": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "left",
+                    "center",
+                    "right",
+                    "full"
+                  ]
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "tag",
+                    "text",
+                    "tag-and-comment",
+                    "tag-and-subTag",
+                    "text-and-comment",
+                    "line",
+                    "whole-line",
+                    "none"
+                  ]
+                },
+                "hideFromTree": {
+                  "type": "boolean"
+                },
+                "hideFromStatusBar": {
+                  "type": "boolean"
+                },
+                "hideFromActivityBar": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "scope": "window"
+          },
+          "clippings.highlights.defaultHighlight": {
+            "default": {},
+            "markdownDescription": "Default configuration for highlighting. [Read more...](https://github.com/Gruntfuggly/todo-tree#highlighting).",
+            "type": "object",
+            "properties": {
+              "foreground": {
+                "type": "string",
+                "format": "color-hex"
+              },
+              "background": {
+                "type": "string",
+                "format": "color-hex"
+              },
+              "opacity": {
+                "type": "number"
+              },
+              "fontWeight": {
+                "type": "string"
+              },
+              "fontStyle": {
+                "type": "string"
+              },
+              "textDecoration": {
+                "type": "string"
+              },
+              "borderRadius": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              },
+              "iconColour": {
+                "type": "string",
+                "format": "color-hex"
+              },
+              "gutterIcon": {
+                "type": "boolean"
+              },
+              "rulerColour": {
+                "type": "string",
+                "format": "color-hex"
+              },
+              "rulerOpacity": {
+                "type": "number"
+              },
+              "rulerLane": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "left",
+                  "center",
+                  "right",
+                  "full"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "tag",
+                  "text",
+                  "tag-and-comment",
+                  "tag-and-subTag",
+                  "text-and-comment",
+                  "line",
+                  "whole-line",
+                  "none"
+                ]
+              },
+              "hideFromTree": {
+                "type": "boolean"
+              },
+              "hideFromStatusBar": {
+                "type": "boolean"
+              },
+              "hideFromActivityBar": {
+                "type": "boolean"
+              }
+            },
+            "scope": "window"
+          },
+          "clippings.highlights.enabled": {
+            "default": true,
+            "markdownDescription": "Set to false to disable highlighting.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.highlights.highlightDelay": {
+            "default": 500,
+            "markdownDescription": "Delay before highlighting tags within files (milliseconds).",
+            "type": "integer",
+            "scope": "window"
+          },
+          "clippings.highlights.useColourScheme": {
+            "default": false,
+            "markdownDescription": "Use a colour scheme to colour the tags. This scheme is applied to the tags in the order of tags. The colours can be modified using `clippings.highlights.foregroundColourScheme` and `clippings.highlights.backgroundColourScheme`. The colour scheme overrides colours in the default highlight, but not the custom highlight.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.highlights.foregroundColourScheme": {
+            "default": [
+              "white",
+              "black",
+              "black",
+              "white",
+              "white",
+              "white",
+              "black"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "A list of colours which is applied to tag highlights in the same order as the tags. Repeats if necessary and is overridden by `clippings.highlights.customHighlight`.",
+            "type": "array",
+            "scope": "window"
+          },
+          "clippings.highlights.backgroundColourScheme": {
+            "default": [
+              "red",
+              "orange",
+              "yellow",
+              "green",
+              "blue",
+              "indigo",
+              "violet"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "A list of colours which is applied to tag highlights in the same order as the tags. Repeats if necessary and is overridden by `clippings.highlights.customHighlight`.",
+            "type": "array",
+            "scope": "window"
+          }
+        }
+      },
+      {
+        "title": "Filtering",
+        "order": 3,
+        "type": "object",
+        "properties": {
+          "clippings.filtering.excludedWorkspaces": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "An array of workspace names to exclude as roots in the tree (wildcards can be used).",
+            "type": "array",
+            "scope": "window"
+          },
+          "clippings.filtering.excludeGlobs": {
+            "default": [
+              "**/node_modules/*/**"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "Globs for use in limiting search results by exclusion (applied after **includeGlobs**), e.g. `[\"**/*.txt\"]` to ignore all .txt files.",
+            "type": "array",
+            "scope": "window"
+          },
+          "clippings.filtering.ignoreGitSubmodules": {
+            "default": false,
+            "markdownDescription": "If true, any subfolders containing a .git file will be ignored when searching.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.filtering.includedWorkspaces": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "An array of workspace names to include as roots in the tree (wildcards can be used). An empty array includes all workspace folders.",
+            "type": "array",
+            "scope": "window"
+          },
+          "clippings.filtering.includeGlobs": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "Globs for use in limiting search results by inclusion, e.g. `[\"**/unit-tests/*.js\"]` to only show .js files in unit-tests subfolders.",
+            "type": "array",
+            "scope": "window"
+          },
+          "clippings.filtering.includeHiddenFiles": {
+            "default": false,
+            "markdownDescription": "Include hidden files (starting with a .).",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.filtering.scopes": {
+            "default": [],
+            "markdownDescription": "Scopes (sets of globs) that can be switched between",
+            "type": "array",
+            "scope": "window"
+          },
+          "clippings.filtering.useBuiltInExcludes": {
+            "default": "none",
+            "enum": [
+              "none",
+              "file excludes",
+              "search excludes",
+              "file and search excludes"
+            ],
+            "markdownDescription": "Add VSCode's `files.exclude` and/or `search.exclude` list to the ignored paths.",
+            "markdownEnumDescriptions": [
+              "Don't used any built in excludes",
+              "Use the Files:Exclude setting",
+              "Use the Search:Exclude setting",
+              "Use the Files:Exclude and the Search:Exclude setting"
+            ],
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.filtering.builtInExcludes": {
+            "default": [
+              ".git",
+              ".hg",
+              ".svn",
+              "node_modules",
+              ".pnpm-store",
+              ".yarn/cache",
+              ".claude",
+              ".next",
+              ".nuxt",
+              ".output",
+              ".turbo",
+              ".cache",
+              ".parcel-cache",
+              ".svelte-kit",
+              ".angular",
+              ".vercel",
+              ".sst",
+              ".terraform",
+              "target",
+              "__pycache__",
+              ".venv",
+              "venv",
+              ".gradle",
+              ".idea",
+              ".vs"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "markdownDescription": "Directory names Clippings never indexes below each scan root, in addition to `clippings.filtering.excludeGlobs` and `.gitignore`. An entry without a `/` matches a directory name at any depth below the root; an entry with a `/` matches a trailing run of path components. Never matched against the scan root itself or its ancestors.",
+            "type": "array",
+            "scope": "window"
+          }
+        }
+      },
+      {
+        "title": "Tree",
+        "order": 4,
+        "type": "object",
+        "properties": {
+          "clippings.tree.autoRefresh": {
+            "default": true,
+            "markdownDescription": "Refresh the tree when files are opened or saved.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.disableCompactFolders": {
+            "default": false,
+            "markdownDescription": "Prevent the tree from showing compact folders.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.expanded": {
+            "default": false,
+            "markdownDescription": "When opening new workspaces, show the tree initially fully expanded.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.filterCaseSensitive": {
+            "default": false,
+            "markdownDescription": "Set to true if you want the view filtering to be case sensitive.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.flat": {
+            "default": false,
+            "markdownDescription": "When opening new workspaces, show the tree initially as flat list of files.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.groupedByTag": {
+            "default": false,
+            "markdownDescription": "When opening new workspaces, show the tree initially grouped by tag.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.groupedBySubTag": {
+            "default": false,
+            "markdownDescription": "When opening new workspaces, show the tree initially grouped by sub tag.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.hideIconsWhenGroupedByTag": {
+            "default": false,
+            "markdownDescription": "Save some space by hiding the item icons when grouped by tag.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.hideTreeWhenEmpty": {
+            "default": false,
+            "markdownDescription": "Hide the view if it is empty.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.labelFormat": {
+            "default": "${tag} ${after}",
+            "markdownDescription": "Format for tree items.",
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.tree.scanAtStartup": {
+            "default": true,
+            "markdownDescription": "Normally the tree is built as soon as the window is opened. If you have a large code base and want to manually start the scan, set this to false.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.scanMode": {
+            "default": "workspace",
+            "enum": [
+              "workspace",
+              "open files",
+              "current file",
+              "workspace only"
+            ],
+            "markdownDescription": "Set this to change which files are scanned.",
+            "markdownEnumDescriptions": [
+              "Scan the whole workspace (or workspaces) and open file",
+              "Scan open files only",
+              "Scan the current file only",
+              "Scan the workspace but don't refresh files open in the editor"
+            ],
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.tree.showBadges": {
+            "default": true,
+            "markdownDescription": "Show badges and SCM state in the tree view.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.showCountsInTree": {
+            "default": false,
+            "markdownDescription": "Show counts of TODOs in the tree.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.showCurrentScanMode": {
+            "default": true,
+            "markdownDescription": "Show the current scan mode at the top of the tree view",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.subTagClickUrl": {
+            "default": "",
+            "markdownDescription": "The URL to open when clicking on a sub tag in the tree. Can include placeholders as defined in `clippings.tree.labelFormat`.",
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.tree.sortTagsOnlyViewAlphabetically": {
+            "default": false,
+            "markdownDescription": "Sort items in the tags only view alphabetically instead of by file and line number.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.sort": {
+            "default": true,
+            "markdownDescription": "The walker searches using multiple threads to improve performance. The tree is sorted when it is populated so that it stays stable. If you want to use the walker's own (unspecified, non-deterministic) order, set this to false.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.tagsOnly": {
+            "default": false,
+            "markdownDescription": "When opening new workspaces, show only tag elements in tree.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.tooltipFormat": {
+            "default": "${filepath}, line ${line}",
+            "markdownDescription": "Tree item tooltip format.",
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.tree.trackFile": {
+            "default": true,
+            "markdownDescription": "Track the current file in the tree view.",
+            "type": "boolean",
+            "scope": "window"
+          }
+        }
+      },
+      {
+        "title": "Buttons",
+        "order": 5,
+        "type": "object",
+        "properties": {
+          "clippings.tree.buttons.reveal": {
+            "default": true,
+            "markdownDescription": "Show a button in the tree view title bar to reveal the current item (only when track file is not enabled).",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.buttons.scanMode": {
+            "default": false,
+            "markdownDescription": "Show a button in the tree view title bar to change the Scan Mode setting.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.buttons.viewStyle": {
+            "default": true,
+            "markdownDescription": "Show a button in the tree view title bar to change the view style (tree, flat or tags only).",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.buttons.groupByTag": {
+            "default": true,
+            "markdownDescription": "Show a button in the tree view title bar to enable grouping items by tag.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.buttons.groupBySubTag": {
+            "default": false,
+            "markdownDescription": "Show a button in the tree view title bar to enable grouping items by sub tag.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.buttons.filter": {
+            "default": true,
+            "markdownDescription": "Show a button in the tree view title bar allowing the tree to be filtered by entering some text.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.buttons.refresh": {
+            "default": true,
+            "markdownDescription": "Show a refresh button in the tree view title bar.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.buttons.expand": {
+            "default": true,
+            "markdownDescription": "Show a button in the tree view title bar to expand or collapse the whole tree.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.tree.buttons.export": {
+            "default": false,
+            "markdownDescription": "Show a button in the tree view title bar to create a file showing the tree content.",
+            "type": "boolean",
+            "scope": "window"
+          }
+        }
+      },
+      {
+        "title": "Regex",
+        "order": 6,
+        "type": "object",
+        "properties": {
+          "clippings.regex.regex": {
+            "default": "(//|#|<!--|;|/\\*|^|^[ \\t]*(-|\\d+.))\\s*($TAGS)",
+            "markdownDescription": "Regular expression for matching TODOs. Note: **($TAGS)** will be replaced by the expanded tag list. For some of the extension features to work, **($TAGS)** should be present in the regex, however, the basic functionality should still work if you need to explicitly expand the tag list.",
+            "type": "string",
+            "minLength": 1,
+            "scope": "window"
+          },
+          "clippings.regex.regexCaseSensitive": {
+            "default": true,
+            "markdownDescription": "Use a case sensitive regular expression.",
+            "type": "boolean",
+            "scope": "window"
+          },
+          "clippings.regex.subTagRegex": {
+            "default": "",
+            "markdownDescription": "Regular expression for processing the text to the right of the tag, e.g. for extracting a sub tag, or removing unwanted characters.",
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.regex.enableMultiLine": {
+            "default": false,
+            "markdownDescription": "Force the regex to match over multiple lines. Allows use of `[\\s\\S]` to match anything including newlines.",
+            "type": "boolean",
+            "scope": "window"
+          }
+        }
+      },
+      {
+        "title": "Server",
+        "order": 7,
+        "type": "object",
+        "properties": {
+          "clippings.server.path": {
+            "default": "",
+            "markdownDescription": "Path to a Clippings server binary to use instead of the bundled one. `~` and `${workspaceFolder}` are expanded. When set at workspace scope, the client prompts Allow or Deny once per resolved path before using it.",
+            "type": "string",
+            "scope": "machine-overridable"
+          },
+          "clippings.server.logLevel": {
+            "default": "info",
+            "enum": [
+              "error",
+              "warn",
+              "info",
+              "debug",
+              "trace"
+            ],
+            "markdownDescription": "Log level for the Clippings server, shown in the Clippings output channel.",
+            "type": "string",
+            "scope": "window"
+          },
+          "clippings.trace.server": {
+            "default": "off",
+            "enum": [
+              "off",
+              "messages",
+              "verbose"
+            ],
+            "markdownDescription": "Traces the communication between VS Code and the Clippings language server.",
+            "type": "string",
+            "scope": "window"
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit -p .",
+    "dev": "cargo build --manifest-path ../Cargo.toml -p clippings",
+    "test:unit": "mocha --ui bdd \"out/test/unit/**/*.test.js\"",
+    "test:integration": "vscode-test",
+    "test": "pnpm dev && pnpm typecheck && pnpm build && pnpm test:unit && pnpm test:integration",
+    "package": "vsce package --no-dependencies"
+  },
+  "packageManager": "pnpm@10.27.0",
+  "dependencies": {
+    "@primer/octicons": "19.38.0",
+    "vscode-languageclient": "10.1.1"
+  },
+  "devDependencies": {
+    "@types/mocha": "10.0.10",
+    "@types/node": "22.20.4",
+    "@types/vscode": "1.91.0",
+    "@vscode/test-cli": "0.0.15",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2",
+    "mocha": "11.8.0",
+    "typescript": "7.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

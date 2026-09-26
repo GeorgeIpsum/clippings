@@ -5,3 +5,4 @@ node_modules/
 /extension/dist/
 *.pending-snap
 /.superpowers/
+!/tests/fixtures/workspace/node_modules/
