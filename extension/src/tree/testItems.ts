@@ -9,6 +9,7 @@ export interface TestItem {
   description: string | undefined;
   tooltip: string | undefined;
   contextValue: string | undefined;
+  resourceUri: string | undefined;
   state: 'none' | 'collapsed' | 'expanded';
   icon: string | undefined;
   command: { command: string; arguments: unknown[] } | undefined;
@@ -29,6 +30,7 @@ export function testItem(id: string, item: vscode.TreeItem): TestItem {
     description: typeof item.description === 'string' ? item.description : undefined,
     tooltip: typeof item.tooltip === 'string' ? item.tooltip : undefined,
     contextValue: item.contextValue,
+    resourceUri: item.resourceUri?.toString(),
     state: states[item.collapsibleState ?? 0],
     icon: iconName(item.iconPath),
     command: item.command ? { command: item.command.command, arguments: item.command.arguments ?? [] } : undefined,

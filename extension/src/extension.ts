@@ -4,12 +4,15 @@
 import * as vscode from 'vscode';
 import { registerExpandCommands, resetExpansion } from './commands/expand';
 import { registerFilterCommands } from './commands/filters';
+import { registerGoToCommands } from './commands/goTo';
 import { registerNavigationCommands } from './commands/navigation';
 import { NEEDS_SCAN_MESSAGE, registerScanCommands } from './commands/scan';
 import { needsRestart, registerServerCommands } from './commands/server';
+import { registerSettingCommands } from './commands/settings';
 import { registerViewCommands } from './commands/view';
 import { affectsServer, readConfiguration } from './config/read';
 import { ConfigurationSync, replacesTree } from './config/sync';
+import { SettingWriter } from './config/writes';
 import { IconResolver } from './icons/resolver';
 import type { StatusParams } from './protocol';
 import { ServerConnection } from './server/connection';
@@ -59,6 +62,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     settings: () => sync.current,
   });
   const flash = new LineFlash();
+  const writer = new SettingWriter(prompts);
 
   context.subscriptions.push(
     log,
@@ -72,6 +76,8 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     ...registerNavigationCommands(revealer, flash),
     ...registerViewCommands({ store, sync, expansion, provider, prompts }),
     ...registerFilterCommands({ store, sync, cache, prompts }),
+    ...registerSettingCommands(writer, prompts),
+    ...registerGoToCommands(server),
     ...registerScanCommands(server),
     server.onStatus((s) => {
       lastStatus = s;
