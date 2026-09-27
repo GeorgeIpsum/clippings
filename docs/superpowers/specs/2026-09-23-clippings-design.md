@@ -338,7 +338,6 @@ Transport: JSON-RPC over stdio. The server uses the `lsp-server` crate. The clie
 - Text document sync: open, close and incremental change, for the schemes in `general.schemes`.
 - `workspace/didChangeWorkspaceFolders`: roots change, full rescan.
 - `client/registerCapability` and `client/unregisterCapability` for `workspace/didChangeWatchedFiles`, and the resulting notifications.
-- `$/cancelRequest` for the custom requests.
 
 Full scans are not LSP requests and do not use LSP progress. They report through `clippings/status` and are cancelled with `clippings/stopScan`.
 
@@ -363,6 +362,7 @@ Full scans are not LSP requests and do not use LSP progress. They report through
 
 - `generation` increases only when `reset` is true. A non-reset `styles` message adds keys to the current generation.
 - The server sends `styles` for new keys before the `decorations` message that uses them.
+- A server's first `status` precedes its first `styles` reset, so a client that discards its style generation on seeing a new instance keeps that reset.
 - A `decorations` message fully replaces the previous one for that document. Keys absent from `ranges` are cleared.
 - The client drops a `decorations` message whose generation is not its current generation, or whose version is older than the document's current version.
 - After a reset the server resends decorations for every open document.
@@ -376,7 +376,9 @@ All `clippings.*` settings are declared with window scope, except `server.path`,
 - the true keys of `files.exclude` and `search.exclude`, and `explorer.compactFolders`;
 - the view state and temporary globs from workspace storage.
 
-The object has `general`, `highlights`, `filtering`, `tree` and `regex` as nested objects mirroring the settings groups, plus `viewState { flat, tagsOnly, expanded, groupedByTag, groupedBySubTag, filter, includeGlobs, excludeGlobs }`, `filesExclude`, `searchExclude` and `explorerCompactFolders`. Unknown fields are ignored.
+The object has `general`, `highlights`, `filtering`, `tree` and `regex` as nested objects mirroring the settings groups, plus `viewState { flat, tagsOnly, expanded, groupedByTag, groupedBySubTag, filter, includeGlobs, excludeGlobs }`, `filesExclude`, `searchExclude` and `explorerCompactFolders`. Unknown fields are ignored. The client sends each group as VS Code resolves it, including client-only keys such as `tree.buttons`, `filtering.scopes` and `general.statusBarClickBehaviour`, which the server ignores.
+
+VS Code passes on whatever a settings file holds, including a value of the wrong type. The server then cannot read the object: at `initialize` it starts on the defaults, and on `clippings/configure` it keeps the previous object. Either way `clippings/status` carries a warning until a readable object arrives.
 
 On each `clippings/configure` the server diffs against the previous object. Every row whose fields changed applies:
 
@@ -393,14 +395,14 @@ On each `clippings/configure` the server diffs against the previous object. Ever
 
 ### 7.1 Manifest
 
-- `name` `clippings`, display name `Clippings`, category `Clippings`.
+- `name` `clippings`, display name `Clippings`. Every command's category is `Clippings`. The Marketplace category is `Other`, because Marketplace categories come from a fixed list.
 - `publisher` is the maintainer's Marketplace publisher ID. Until one exists the value is `clippings-dev` and CI publishing jobs are skipped.
 - `engines.vscode`: the minimum version required by the pinned `vscode-languageclient` 10.x release.
 - `extensionKind: ["workspace"]`, so the platform VSIX installs where the files are and the server runs there.
 - `activationEvents: ["onStartupFinished"]`.
 - `capabilities.untrustedWorkspaces`: supported `limited`, with `clippings.server.path` as a restricted setting.
 - `capabilities.virtualWorkspaces`: false.
-- An activity bar view container `clippings` with one view `clippings-view`, whose `when` clause is `!clippings-is-empty`.
+- An activity bar view container `clippings` with one view `clippings-view`, whose `when` clause is `!clippings-is-empty`. The container icon is Clippings' own drawing.
 
 ### 7.2 Settings
 
@@ -415,7 +417,7 @@ Carried over unchanged in name, type and default:
 - `tree.buttons.*`: `reveal`, `scanMode`, `viewStyle`, `groupByTag`, `groupBySubTag`, `filter`, `refresh`, `expand`, `export`.
 - `regex.*`: `regex`, `regexCaseSensitive`, `subTagRegex`, `enableMultiLine`.
 
-That is 61 carried settings.
+That is 61 carried settings. `general.revealBehaviour` keeps v0.0.224's three values, `start of line`, `start of todo` and `end of todo`; the `leave focus in tree` value added in v0.0.225 is not carried.
 
 New:
 
@@ -435,28 +437,38 @@ Dropped:
 | `tree.showInExplorer`, `tree.showScanOpenFilesOrWorkspaceButton`, `tree.showTagsFromOpenFilesOnly` | deprecated and unread in todo-tree |
 | `general.debug` | replaced by `server.logLevel`; the importer maps `true` to `debug` |
 
+In the settings UI, `filtering.builtInExcludes` sits in the Filtering group, and `server.path`, `server.logLevel` and `trace.server` form a Server group in the place of todo-tree's dropped Ripgrep group.
+
 ### 7.3 Importing todo-tree settings
 
 On activation, if any `todo-tree.*` key has an explicit global or workspace value, no `clippings.*` key has one, and the user has not chosen Never, a notification offers to import. Choices are Import, Not Now and Never. The command `clippings.importTodoTreeSettings` runs the import on demand.
 
 The import copies each carried key's global and workspace values to the same scopes under `clippings.*`, maps `general.debug` as described above, and skips the other dropped keys. Workspace-folder values are skipped and logged: todo-tree read its settings at window level, so VS Code already ignored them. Keybindings are not imported.
 
+The offer reads `Clippings found Todo Tree settings. Import them into Clippings?`. A finished import reports `Clippings: imported N settings from Todo Tree.`, and each skipped value is logged in the Clippings output channel.
+
+Running the import on demand may overwrite a `clippings.*` setting that already has an explicit value at the same scope; when it would, a confirmation asks `Overwrite N Clippings settings with your Todo Tree settings?` (`setting` singular for one) with Overwrite and Cancel, and Cancel changes nothing. A setting write that fails shows a warning (section 10.2), and the completion message counts only the writes that succeeded.
+
 ### 7.4 Server lifecycle
 
 **Resolution order**, stopping at the first candidate that passes the probe:
 
 1. the `CLIPPINGS_SERVER_PATH` environment variable;
-2. `clippings.server.path`, prompting Allow or Deny once per resolved path when it comes from workspace settings;
+2. `clippings.server.path`, prompting Allow or Deny once per resolved path when it comes from workspace settings. In an untrusted workspace the workspace value is ignored without a prompt and the user's own value applies. Granting trust restarts the server when a workspace value exists;
 3. the bundled `bin/clippings` next to `bin/platform.ok`;
 4. `clippings` on PATH, in development builds only.
 
 **Probe**: run `<candidate> probe`, which prints `{ version, target, protocolVersion }` as JSON and exits 0, with a 15 second timeout. The bundled binary is made executable first if needed. A candidate fails if it does not start, times out, exits non-zero, or reports a different protocol version. If every candidate fails, one error lists each candidate and its failure, with buttons to open the output channel and the setting. This is tinymist's aggregation pattern with CodeLLDB's marker file (survey §5 item 2).
 
-**Spawn**: `clippings lsp` through the language client, with `RUST_BACKTRACE=1` and the log level in the environment. stdout carries JSON-RPC only and stderr goes to the Clippings output channel. The server exits when stdin closes.
+**Spawn**: `clippings lsp` through the language client, with `RUST_BACKTRACE=1` and `CLIPPINGS_LOG` set to `server.logLevel` in the environment. stdout carries JSON-RPC only and stderr goes to the Clippings output channel. The server exits when stdin closes.
 
-**Crashes**: a custom error handler restarts the server after each crash until five crashes occur within three minutes. It then stops and shows a notification with Restart and Show Log. The client discards its caches when it sees a new server instance (section 6.2).
+**Crashes**: a custom error handler restarts the server after each crash until five crashes occur within three minutes. It then stops and shows a notification with Restart and Show Log, in place of the language client's own. A server that fails to start counts as a crash: when it exits before it is running, or does not finish starting within 10 seconds, the client kills its process, discards that language client and starts a fresh one, until the same limit, so a server that always fails at startup stops after five attempts. `clippings.restartServer` forgets past crashes. The client discards its caches when it sees a new server instance (section 6.2).
 
 **Restarts**: `clippings.restartServer` restarts on demand. A change to `general.schemes`, `server.path`, `server.logLevel` or `trace.server` restarts the client, because the document selector and spawn environment are fixed at start.
+
+**Serialization**: start, stop, restart, a crash restart and a start failure all run one at a time on a single queue, so at most one language client and one server process are ever live. Stopping, disposing or deactivating while a start is in progress cancels that start, and no server spawns again until the next explicit start. Restarting while a start is pending cancels it and starts fresh with a cleared crash history. The language client's own error notifications are suppressed: only Clippings' own notices for a start failure or the crash limit reach the user, and the client's messages go to the output channel instead.
+
+**Malformed settings**: a setting of the wrong type does not stop the server from starting (section 6.3). Where the client reads `general.schemes` itself, for the document selector and track file, a value that is not a list of strings counts as the default schemes.
 
 One server serves all workspace folders in a window.
 
@@ -468,14 +480,15 @@ One server serves all workspace folders in a window.
 - On `clippings/treeChanged` the client fires the change event for each listed parent, with `undefined` for `null`. VS Code then refetches those parents' children. IDs the client has never loaded are ignored.
 - **Expansion is client-side.** `collapsibleState` comes from the client's expansion map, keyed by node ID, and falls back to the node's `defaultExpanded`. Expand and collapse events update the map in workspace storage and are not sent to the server.
 - **Expand Tree and Collapse Tree** set the persisted `expanded` view state, clear the expansion map, and bump the epoch, then refresh the root. New TreeItem IDs make VS Code read `collapsibleState` afresh; VS Code otherwise keeps its own expansion state for known IDs. The epoch also bumps on `clippings.resetCache` and when `tree.expanded` changes, and never on ordinary deltas, so selection and focus survive edits.
-- **Reveal and track file** call `clippings/find`, cache the returned nodes and their parents, and call `TreeView.reveal` on the first path's last node.
-- **Track file** runs 500 ms after the active editor changes, when `tree.autoRefresh` and `tree.trackFile` are true, the document's scheme is in `general.schemes`, and the view is visible. It reveals without taking focus.
+- **When the epoch bumps.** A change that makes the server re-render the whole tree, which it reports as a root refresh, is a change of view mode, grouping, `expanded` or scan mode. For such a change the epoch bumps at that root refresh, so VS Code reads the new defaults under new IDs; bumping earlier would cache the old defaults under the new IDs. For any other change the epoch bumps at once and the client refreshes the root. The epoch survives `resetCache` and only grows, so tree item IDs never repeat.
+- **Reveal and track file** call `clippings/find`, cache the returned nodes and their parents, and call `TreeView.reveal` on the first path's last node. `clippings.reveal` acts only while the view is visible, from the command palette too, as in todo-tree.
+- **Track file** runs 500 ms after the active editor changes, when `tree.autoRefresh` and `tree.trackFile` are true, the document's scheme is in `general.schemes`, and the view is visible. It reveals without taking focus. Another editor change within the 500 ms cancels the pending reveal.
 - Todo clicks open the document at the node's position and flash the line for 150 ms using one reused decoration type.
 - When `needsScan` is set, the view's message is `Click the refresh button to scan...`. It clears when a scan starts.
 
 ### 7.6 Commands, menus and context keys
 
-Every todo-tree command exists under the `clippings.` prefix with the same suffix, title, icon, menu placement and when-clause, with `todo-tree-*` context keys renamed `clippings-*`. That covers the 34 declared commands and the three registration-only commands `openUrl`, `stopScan` and `onStatusBarClicked` (inventory §7, §4.8).
+Every todo-tree command exists under the `clippings.` prefix with the same suffix, title, icon, menu placement and when-clause, with `todo-tree-*` context keys renamed `clippings-*`. Menu when-clauses test `view == clippings-view` where todo-tree matched `view =~ /todo-tree/`. The Show Tree View context menu entry's clause is parenthesised, `view == clippings-view && (clippings-flat == true || clippings-tags-only == true)`, so its second condition stays inside the view guard. That covers the 34 declared commands and the three registration-only commands `openUrl`, `stopScan` and `onStatusBarClicked` (inventory §7, §4.8).
 
 New commands: `clippings.importTodoTreeSettings`, `clippings.restartServer`, `clippings.showLog`.
 
@@ -503,16 +516,21 @@ New commands: `clippings.importTodoTreeSettings`, `clippings.restartServer`, `cl
 
 View-state commands update workspace storage and send `clippings/configure`. `clippings.resetCache` clears all persisted view state, filters and the expansion map, bumps the epoch, then sends `clippings/configure`.
 
+**Folder and file filters** take the filesystem path from the node's own key (`w:`, `d:` or `f:`), found through the parent recorded for the node, because keys can contain `/`. A file node of a document without a file path has nothing to filter. The path becomes a glob with its metacharacters escaped as `globset::escape` does, and with forward slashes on Windows. Reset All Filters clears the text filter as well as the temporary globs.
+
 Export opens a read-only virtual document under the `clippings-export` scheme with the server's content, named by the formatted export path.
 
 ### 7.7 Decorations, status bar and icons
 
 - The `styles` handler creates each `TextEditorDecorationType` synchronously before it returns, so a following `decorations` message always finds its types. Gutter icons use deterministic file paths, and a missing icon file is written synchronously the first time its name and colour appear.
-- Decorations are applied to every visible editor of the document, following the rules in section 6.2.
+- Decorations are applied to every visible editor of the document, following the rules in section 6.2. The client tracks the applied keys per editor, not per document, so each visible editor of the same document clears the keys it no longer has on its own.
 - The client keeps the last applied decorations per document URI and version. When an editor becomes visible, the cached entry is applied immediately if its version equals the document's current version. The entry is dropped when the document closes.
-- The status bar item sits on the left at priority 0 and shows the server's text. While a full scan runs it shows scanning and clicking stops the scan. After a stop it shows interrupted and clicking refreshes. Otherwise a click follows `general.statusBarClickBehaviour`: `reveal` focuses the view, `toggle highlights` flips `highlights.enabled`, and `cycle` steps total, tags, top three, current file.
+- A style key with no matching decoration type is skipped and logged as a warning once per key.
+- The status bar item sits on the left at priority 0 and shows the server's text. While a full scan runs it shows `Clippings: Scanning...` and clicking stops the scan. After a stop it shows `Clippings: Scanning interrupted.` and clicking refreshes. Otherwise a click follows `general.statusBarClickBehaviour`: `reveal` focuses the view, `toggle highlights` flips `highlights.enabled`, and `cycle` steps total, tags, top three, current file.
 - The view's badge and title follow `clippings/status`. Configuration warnings are shown once per distinct set.
 - Icons: codicons become theme icons. Octicons, todo-tree's own icons and the check-circle icon are rendered to SVG once per name and colour under global storage and cached in memory.
+- The `todo-tree` and `todo-tree-filled` icons and the default gutter icon are Clippings' own drawings, and the check-circle is the octicon `check-circle-fill`. todo-tree's icon files are licensed CC BY-ND 3.0, not MIT, so none is copied.
+- Icon names that are neither octicons, `todo-tree`, `todo-tree-filled` nor `$(name)` codicons are reported once as a warning. Codicon names are not checked, because the extension has no codicon list.
 
 ### 7.8 Persisted state
 
@@ -552,7 +570,7 @@ Plus one universal VSIX without a binary or `platform.ok`, which works only when
 
 ### 8.3 Local development
 
-`pnpm dev` builds the debug server. The extension launch configuration sets `clippings.server.path` to that binary and `RUST_BACKTRACE=1`, so F5 runs the extension against a fresh build.
+`pnpm dev` builds the debug server. The Run Extension launch configuration in `.vscode/launch.json` runs `pnpm dev && pnpm build` first, then sets the `CLIPPINGS_SERVER_PATH` environment variable to that binary and `RUST_BACKTRACE=1`, so F5 runs the extension against a fresh build. It uses the environment variable rather than `clippings.server.path` because a launch configuration cannot set a setting, and the variable is resolution candidate 1, so no Allow or Deny prompt appears.
 
 ## 9. Multi-root and remote
 
@@ -569,6 +587,7 @@ Plus one universal VSIX without a binary or `platform.ok`, which works only when
 - An unreadable file is logged at debug level and skipped. The scan continues.
 - A regex that fails under both engines puts the server in an error state. The last good index and view stay in place, `clippings/status` carries the error, and the client shows one warning with an Open Settings action.
 - If the watcher reports an overflow or error, the server runs a full rescan and warns once, unless `tree.autoRefresh` is false (section 5.9).
+- A configuration the server cannot read keeps the previous one, or the defaults at startup, with a warning in `clippings/status` (section 6.3).
 
 ### 10.2 Client
 
@@ -579,7 +598,7 @@ Plus one universal VSIX without a binary or `platform.ok`, which works only when
 
 ### 10.3 Logging
 
-Server logs go to stderr at `server.logLevel` and appear in the Clippings output channel. `trace.server` traces JSON-RPC messages in the same channel.
+Server logs go to stderr and appear in the Clippings output channel. The level comes from the `CLIPPINGS_LOG` environment variable, which the client sets from `server.logLevel`: `error`, `warn`, `info`, `debug`, `trace` or `off`, case-insensitively, and `info` when unset, empty or unrecognised. The server logs one info line at startup with its version, folder count and protocol version. `trace.server` traces JSON-RPC messages in the same channel.
 
 ## 11. Parity policy
 
@@ -605,6 +624,7 @@ New behaviour:
 
 - **File watching.** Changes on disk update the tree through VS Code's file watcher, in every mode that walks roots, including saves in `workspace only` mode. todo-tree 0.0.224 had no watcher and relied on git or periodic polling.
 - **Built-in never-index list** (section 5.3).
+- **Own icon artwork** for the view container, the two todo icons and the default gutter icon (section 7.7).
 
 Fixes:
 
@@ -641,6 +661,9 @@ Fixes:
 - Export reflects the visible tree, includes extra lines, and never merges two todos on one line or two same-named files into one key.
 - No global `RegExp.prototype.exec` replacement.
 - Glob patterns match dot-prefixed path segments.
+- Reset All Filters also clears the text filter, which todo-tree left in place so it returned on the next refresh.
+- The Show Tree View context menu entry stays inside its view guard.
+- Track file cancels a pending reveal when the editor changes again, instead of queueing reveals.
 
 ### 11.3 Dropped
 
@@ -672,6 +695,8 @@ Rust tests spawn `clippings lsp` against the fixture workspace and assert on mes
 
 `@vscode/test-electron` over the fixture workspace: tree labels in each view mode, every command, expand and collapse, decorations through a test hook, status bar text, context keys, settings import. This is a smoke suite, not an exhaustive one.
 
+Each run copies `tests/fixtures/workspace/` to a temporary directory and starts VS Code with a fresh user data directory holding quiet settings, so tests never touch the repository or the user's profile. Workspace trust is disabled, so untrusted behaviour is covered by unit tests. The server comes from `CLIPPINGS_SERVER_PATH`, which defaults to the debug build. Tests read state through test hooks that `activate` returns, and answer prompts through the one prompts module every command uses. The VS Code version is `stable` unless `CLIPPINGS_TEST_VSCODE` names another.
+
 ## 13. Performance targets and benchmarks
 
 `clippings bench` measures the core, and an extension test hook measures extension host time. Every run records the machine, the file count of each scan set, and ripgrep's time on the same set with equivalent flags and `--max-columns=1000` as the reference. Results are recorded in `docs/benchmarks/` for each milestone.
@@ -694,6 +719,8 @@ Scan sets:
 | Extension host time to apply a delta that refreshes 1,000 visible nodes | under 30 ms |
 | Timer wakeups when idle with git and periodic refresh off | zero |
 | Server resident memory, tilliX wide | under 150 MB |
+
+Extension host time counts the provider's own synchronous work, handling `clippings/treeChanged`, recording children and building tree items, plus parsing the children response. VS Code's own tree conversion is not visible to the extension and is excluded. The prototype measured about 1.4 ms for 1,000 nodes.
 
 The view rebuild target reflects a prototype measurement of 12.5 ms on the same machine model. Sharing todo data between the index and the view, which would lower it further, is plan 4's optimisation.
 
