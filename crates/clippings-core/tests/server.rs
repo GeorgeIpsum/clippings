@@ -373,6 +373,25 @@ fn invalid_regex_reports_an_error_and_keeps_the_tree() {
 }
 
 #[test]
+fn a_setting_of_the_wrong_type_starts_on_the_defaults_with_a_warning() {
+    let (_t, root) = workspace();
+    let mut c = Client::start(&root, json!({ "general": { "schemes": "file" } }), true);
+    let status = c.expect("clippings/status", |s| {
+        s["warnings"].as_array().is_some_and(|w| !w.is_empty())
+    });
+    let warning = status["warnings"][0].as_str().unwrap();
+    assert!(
+        warning.starts_with("Invalid configuration, using the defaults: invalid type"),
+        "{warning}"
+    );
+    let name = root.file_name().unwrap().to_string_lossy().to_string();
+    assert!(c.settled_top().contains(&name), "the tree is served");
+    c.notify("clippings/configure", settings());
+    c.expect("clippings/status", |s| s["warnings"] == json!([]));
+    c.shutdown();
+}
+
+#[test]
 fn protocol_version_mismatch_is_rejected() {
     let (_t, root) = workspace();
     let c = Client::start_with(&root, json!({ "protocolVersion": 99 }), true);

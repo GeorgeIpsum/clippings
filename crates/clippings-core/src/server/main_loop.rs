@@ -3,10 +3,11 @@
 use super::{Env, Server};
 use crate::fs::{Fs, NativeFs};
 use crate::protocol::InitializeParams;
+use crate::settings::Settings;
 use crate::PROTOCOL_VERSION;
 use crossbeam_channel::{after, never, select};
 use lsp_server::{Connection, ErrorCode, Message, Response};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Instant;
@@ -21,9 +22,20 @@ fn capabilities() -> serde_json::Value {
     })
 }
 
+/// Replaces initial settings the server cannot read with an empty object, so
+/// the server starts on the defaults, and returns why. A hand-edited settings
+/// file can hold a value of the wrong type, which VS Code passes on.
+fn take_unreadable_settings(raw: &mut Value) -> Option<String> {
+    let settings = raw.get_mut("initializationOptions")?.get_mut("settings")?;
+    let error = serde_json::from_value::<Settings>(settings.clone()).err()?;
+    *settings = json!({});
+    Some(error.to_string())
+}
+
 /// Runs the handshake and the event loop until `exit`.
 pub fn run(connection: Connection, fs: Arc<dyn Fs>, env: Env) -> Result<(), String> {
-    let (id, raw) = connection.initialize_start().map_err(|e| e.to_string())?;
+    let (id, mut raw) = connection.initialize_start().map_err(|e| e.to_string())?;
+    let unreadable = take_unreadable_settings(&mut raw);
     let params: InitializeParams = serde_json::from_value(raw).map_err(|e| e.to_string())?;
     let version = params
         .initialization_options
@@ -46,6 +58,10 @@ pub fn run(connection: Connection, fs: Arc<dyn Fs>, env: Env) -> Result<(), Stri
         params.workspace_folders.as_ref().map_or(0, Vec::len),
     );
     let mut server = Server::new(connection.sender.clone(), fs, env, &params);
+    if let Some(e) = unreadable {
+        tracing::warn!("bad configuration: {e}");
+        server.config_warning = Some(format!("Invalid configuration, using the defaults: {e}"));
+    }
     server.start(Instant::now());
     let work = server.work_rx.clone();
     loop {

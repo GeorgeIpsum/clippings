@@ -10,7 +10,7 @@ import { ViewStateStore } from '../../state/viewState';
 import type { ClippingsApi } from '../../testApi';
 import { MemoryMemento } from '../unit/memento';
 import { DEFAULT_TREE } from './fixture';
-import { getApi, treeBecomes, waitFor, whenIdle, withTimeout } from './helpers';
+import { getApi, setSetting, treeBecomes, waitFor, whenIdle, withTimeout } from './helpers';
 
 describe('server lifecycle', () => {
   let api: ClippingsApi;
@@ -318,6 +318,34 @@ describe('server lifecycle', () => {
       connection.dispose();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('starts on the defaults with a warning when a setting has the wrong type', async () => {
+    const s = api.test.server;
+    const instance = s.status()?.instance;
+    await setSetting('general.schemes', 'file');
+    try {
+      const status = await waitFor(
+        'a new server with a warning',
+        () => {
+          const current = s.status();
+          return current && current.instance !== instance && current.warnings.length > 0 ? current : undefined;
+        },
+        [s.onStatus],
+      );
+      assert.match(status.warnings[0] ?? '', /^Invalid configuration, using the defaults: invalid type/);
+      const warned = api.test.prompts.shown.some(
+        (p) => p.kind === 'warning' && p.message.includes('Invalid configuration'),
+      );
+      assert.ok(warned);
+    } finally {
+      await setSetting('general.schemes', undefined);
+    }
+    await waitFor('a server without warnings', () => s.running && s.status()?.warnings.length === 0, [
+      s.onStatus,
+      s.onRunning,
+    ]);
+    await whenIdle(api);
   });
 
   it('shows the log', async () => {

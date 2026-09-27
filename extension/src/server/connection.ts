@@ -11,6 +11,7 @@ import {
   type LanguageClientOptions,
   type ServerOptions,
 } from 'vscode-languageclient/node';
+import { documentSelector } from '../config/schemes';
 import {
   PROTOCOL_VERSION,
   type DecorationsParams,
@@ -268,7 +269,8 @@ export class ServerConnection implements vscode.Disposable {
       gaveUp: (message) => void this.showCrash(message),
     });
     const clientOptions: LanguageClientOptions = {
-      documentSelector: settings.general.schemes.map((scheme) => ({ scheme })),
+      // `vscode-notebook-cell` in the list covers notebook cells (spec 6.1).
+      documentSelector: documentSelector(settings.general.schemes),
       initializationOptions: () => ({ protocolVersion: PROTOCOL_VERSION, settings: this.host.settings() }),
       // Clippings reports a failed start itself, once.
       initializationFailedHandler: () => false,

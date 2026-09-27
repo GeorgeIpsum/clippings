@@ -1,6 +1,7 @@
 // Reveal Current File In Tree and track file (spec 7.5).
 
 import * as vscode from 'vscode';
+import { schemeList } from '../config/schemes';
 import type { Settings, ViewNode } from '../protocol';
 import type { NodeCache } from './nodeCache';
 
@@ -42,7 +43,7 @@ export class Revealer implements vscode.Disposable {
     const uri = editor.document.uri;
     this.timer = setTimeout(() => {
       const { tree, general } = this.deps.settings();
-      if (tree.autoRefresh && tree.trackFile && general.schemes.includes(uri.scheme) && this.deps.view.visible) {
+      if (tree.autoRefresh && tree.trackFile && schemeList(general.schemes).includes(uri.scheme) && this.deps.view.visible) {
         void this.reveal(uri, false);
       }
     }, TRACK_DELAY_MS);

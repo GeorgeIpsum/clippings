@@ -13,9 +13,9 @@ import { registerStatusBarCommand } from './commands/statusBar';
 import { registerViewCommands } from './commands/view';
 import { affectsServer, readConfiguration } from './config/read';
 import { ConfigurationSync, replacesTree } from './config/sync';
+import { SettingWriter } from './config/writes';
 import { ContextKeys } from './context/apply';
 import { contextValues } from './context/keys';
-import { SettingWriter } from './config/writes';
 import { DecorationManager } from './decorations/manager';
 import { registerExport } from './export/documents';
 import { IconFiles } from './icons/files';
@@ -33,8 +33,8 @@ import { NodeCache } from './tree/nodeCache';
 import { LineFlash } from './tree/open';
 import { TreeProvider } from './tree/provider';
 import { Revealer } from './tree/reveal';
-import { Prompts } from './ui/prompts';
 import { testItem } from './tree/testItems';
+import { Prompts } from './ui/prompts';
 
 let connection: ServerConnection | undefined;
 
