@@ -17,6 +17,7 @@ function toRange(r: Range): vscode.Range {
 export class DecorationManager implements vscode.Disposable {
   private generation: number | undefined;
   private readonly types = new Map<string, vscode.TextEditorDecorationType>();
+  private readonly renderOptions = new Map<string, vscode.DecorationRenderOptions>();
   /** The last applied decorations per document URI. */
   private readonly cache = new Map<string, DecorationsParams>();
   /**
@@ -45,6 +46,11 @@ export class DecorationManager implements vscode.Disposable {
 
   get styleKeys(): string[] {
     return [...this.types.keys()];
+  }
+
+  /** The options a key's decoration type was created with, for the tests. */
+  options(key: string): vscode.DecorationRenderOptions | undefined {
+    return this.renderOptions.get(key);
   }
 
   entry(uri: string): DecorationsParams | undefined {
@@ -77,6 +83,7 @@ export class DecorationManager implements vscode.Disposable {
         gutterIcon: (s) => (s.gutterIcon ? this.icons.gutterIcon(s.gutterIcon) : undefined),
       });
       this.types.set(key, vscode.window.createTextEditorDecorationType(options));
+      this.renderOptions.set(key, options);
     }
     // A key redefined within the current generation gets a fresh decoration
     // type; the old one's disposal cleared its highlights, so reapply the
@@ -152,6 +159,7 @@ export class DecorationManager implements vscode.Disposable {
   private disposeTypes(): void {
     for (const type of this.types.values()) type.dispose();
     this.types.clear();
+    this.renderOptions.clear();
   }
 
   dispose(): void {

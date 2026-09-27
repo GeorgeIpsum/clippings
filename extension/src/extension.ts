@@ -17,11 +17,14 @@ import { ContextKeys } from './context/apply';
 import { contextValues } from './context/keys';
 import { SettingWriter } from './config/writes';
 import { DecorationManager } from './decorations/manager';
+import { IconFiles } from './icons/files';
 import { IconResolver } from './icons/resolver';
+import { invalidIcons } from './icons/svg';
 import type { StatusParams } from './protocol';
 import { ServerConnection } from './server/connection';
 import { ViewStateStore } from './state/viewState';
 import { StatusController } from './status/controller';
+import { OnceNotice } from './status/presentation';
 import type { ClippingsApi } from './testApi';
 import { Expansion } from './tree/expansion';
 import { NodeCache } from './tree/nodeCache';
@@ -56,7 +59,10 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
   sync.onPush(updateContext);
   updateContext();
 
-  const icons = new IconResolver();
+  const icons = new IconResolver(
+    new IconFiles(vscode.Uri.joinPath(context.globalStorageUri, 'icons').fsPath),
+    vscode.Uri.joinPath(context.extensionUri, 'resources', 'todo-default.svg'),
+  );
   const decorations = new DecorationManager(icons, log);
   const cache = new NodeCache();
   const expansion = new Expansion(store);
@@ -75,6 +81,14 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
   const flash = new LineFlash();
   const writer = new SettingWriter(prompts);
   const statusController = new StatusController(treeView, prompts);
+  const iconWarnings = new OnceNotice();
+  const checkIcons = () => {
+    const bad = invalidIcons(sync.current);
+    const notice = iconWarnings.next(bad.length > 0 ? [`Invalid icons: ${bad.join(', ')}`] : []);
+    if (notice) void prompts.message('warning', notice);
+  };
+  sync.onPush(checkIcons);
+  checkIcons();
 
   context.subscriptions.push(
     log,
@@ -150,6 +164,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
           return decorations.styleKeys;
         },
         appliedKeys: (editor) => decorations.appliedKeys(editor),
+        options: (key) => decorations.options(key),
       },
       server: {
         get running() {

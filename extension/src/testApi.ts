@@ -42,6 +42,8 @@ export interface DecorationHooks {
   readonly styleKeys: string[];
   /** The style keys last set on a specific editor. */
   appliedKeys(editor: vscode.TextEditor): string[] | undefined;
+  /** The options a key's decoration type was created with. */
+  options(key: string): vscode.DecorationRenderOptions | undefined;
 }
 
 export interface TestHooks {
