@@ -1,6 +1,7 @@
 # Releases Clippings (spec 8.2). A `v*` tag builds all ten packages,
 # attaches them and the debug symbols to a GitHub release, and publishes to
-# the Marketplace and Open VSX when their tokens are configured. A manual run
+# the Marketplace and Open VSX when their repository variables turn them on
+# (docs/release.md, Publishing). A manual run
 # is a dry run by default: it builds, checks and uploads the packages as
 # workflow artifacts, and skips the release and publish jobs.
 name: Release
@@ -89,8 +90,10 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           DRY_RUN: ${{ inputs.dry-run }}
           HAS_ENTRA: ${{ vars.AZURE_CLIENT_ID != '' && vars.AZURE_TENANT_ID != '' }}
-          HAS_VSCE_PAT: ${{ secrets.VSCE_PAT != '' }}
-          HAS_OVSX_PAT: ${{ secrets.OVSX_PAT != '' }}
+          # Repository variables, not secret presence, turn publishing on,
+          # so the tokens can be environment secrets that plan cannot see.
+          MARKETPLACE_AUTH: ${{ vars.MARKETPLACE_AUTH }}
+          OPEN_VSX_PUBLISH: ${{ vars.OPEN_VSX_PUBLISH }}
         run: |
           # A tag push releases. A manual run releases only when dry-run is
           # off, and only from a tag. Anything else is a dry run.
@@ -104,17 +107,32 @@ jobs:
           elif [[ $EVENT == push && $REF_TYPE == tag ]]; then
             release=true
           fi
-          # The Marketplace prefers Microsoft Entra ID through OIDC; a PAT
-          # is the fallback. Azure DevOps global PATs stop working on
-          # 1 December 2026.
+          # MARKETPLACE_AUTH picks how the Marketplace job signs in:
+          # `entra` (preferred: Microsoft Entra ID through OIDC, no stored
+          # secret) or `pat` (the fallback; Azure DevOps global PATs stop
+          # working on 1 December 2026). Unset skips the Marketplace. The
+          # settings are checked on every run, so a dry run catches a typo.
+          case $MARKETPLACE_AUTH in
+            '' | pat) ;;
+            entra)
+              if [[ $HAS_ENTRA != true ]]; then
+                echo "::error::MARKETPLACE_AUTH is entra, but AZURE_CLIENT_ID and AZURE_TENANT_ID are not both set."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::MARKETPLACE_AUTH must be entra, pat or unset, not '$MARKETPLACE_AUTH'."
+              exit 1
+              ;;
+          esac
+          if [[ -n $OPEN_VSX_PUBLISH && $OPEN_VSX_PUBLISH != true ]]; then
+            echo "::error::OPEN_VSX_PUBLISH must be true or unset, not '$OPEN_VSX_PUBLISH'."
+            exit 1
+          fi
           marketplace=none open_vsx=false
           if [[ $release == true ]]; then
-            if [[ $HAS_ENTRA == true ]]; then
-              marketplace=entra
-            elif [[ $HAS_VSCE_PAT == true ]]; then
-              marketplace=pat
-            fi
-            [[ $HAS_OVSX_PAT == true ]] && open_vsx=true
+            marketplace=${MARKETPLACE_AUTH:-none}
+            [[ $OPEN_VSX_PUBLISH == true ]] && open_vsx=true
           fi
           {
             echo "release=$release"
@@ -164,15 +182,18 @@ jobs:
           [[ $PRE_RELEASE == true ]] && flags+=(--prerelease)
           gh release create "$TAG" assets/* --verify-tag --title "Clippings ${TAG#v}" --generate-notes "${flags[@]}"
 
-  # Publishing jobs run only when their credentials are configured. Until
-  # the publisher `clippings-dev` is replaced by a real one (spec 7.1),
-  # none are and both jobs are skipped. See docs/release.md.
+  # Publishing jobs run only when their repository variables turn them on
+  # (MARKETPLACE_AUTH, OPEN_VSX_PUBLISH). Until the publisher `clippings-dev`
+  # is replaced by a real one (spec 7.1), neither is set and both jobs are
+  # skipped. Each job's token is a secret of its own environment, which a
+  # `v*` tag rule protects. See docs/release.md.
   marketplace:
     needs: [plan, release]
     if: needs.plan.outputs.marketplace != 'none'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # The Azure identity's federated credential names this environment.
+    # The Azure identity's federated credential names this environment,
+    # which also holds the VSCE_PAT secret.
     environment: marketplace
     permissions:
       contents: read
@@ -205,6 +226,10 @@ jobs:
           VSCE_PAT: ${{ needs.plan.outputs.marketplace == 'pat' && secrets.VSCE_PAT || '' }}
           PRE_RELEASE: ${{ needs.plan.outputs.pre-release }}
         run: |
+          if [[ $AUTH == pat && -z $VSCE_PAT ]]; then
+            echo "::error::MARKETPLACE_AUTH is pat, but the marketplace environment has no VSCE_PAT secret."
+            exit 1
+          fi
           flags=()
           [[ $AUTH == entra ]] && flags+=(--azure-credential)
           [[ $PRE_RELEASE == true ]] && flags+=(--pre-release)
@@ -215,6 +240,8 @@ jobs:
     if: needs.plan.outputs.open-vsx == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Holds the OVSX_PAT secret.
+    environment: open-vsx
     steps:
       - uses: actions/setup-node@v5
         with:
@@ -228,6 +255,10 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
           PRE_RELEASE: ${{ needs.plan.outputs.pre-release }}
         run: |
+          if [[ -z $OVSX_PAT ]]; then
+            echo "::error::OPEN_VSX_PUBLISH is true, but the open-vsx environment has no OVSX_PAT secret."
+            exit 1
+          fi
           flags=()
           [[ $PRE_RELEASE == true ]] && flags+=(--pre-release)
           for vsix in vsix/*.vsix; do

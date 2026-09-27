@@ -53,10 +53,10 @@ To bump it, edit all four in the same commit (the `channel` line and the three `
 
 The tag starts `.github/workflows/release.yml`, whose jobs run in this order:
 
-1. **plan**: refuses the tag unless its commit is on `main` and CI passed on it (below), checks the tag against the version, and decides the channel and which publishing jobs will run, from whichever of `AZURE_CLIENT_ID`+`AZURE_TENANT_ID`, `VSCE_PAT` and `OVSX_PAT` are configured;
+1. **plan**: refuses the tag unless its commit is on `main` and CI passed on it (below), checks the tag against the version, and decides the channel and which publishing jobs will run, from the `MARKETPLACE_AUTH` and `OPEN_VSX_PUBLISH` repository variables;
 2. **build** (`.github/workflows/build.yml`): builds the server for the nine targets, signs the macOS and Windows binaries when configured, checks each, and packages the ten VSIX files;
 3. **release**: creates the GitHub release for the tag with generated notes, marked pre-release for odd minors, with the ten packages and nine symbol files attached;
-4. **marketplace** and **open-vsx**: publish the ten packages, each only when its credentials are configured (see [Publishing](#publishing)).
+4. **marketplace** and **open-vsx**: publish the ten packages, each only when its repository variable turns it on (see [Publishing](#publishing)).
 
 `build` builds, checks and packages but runs no tests, so a release is only as tested as CI has made its commit. On a tag, `plan` therefore refuses to go on, and nothing is built, released or published, when:
 
@@ -114,11 +114,16 @@ Only two workflows ever run `build.yml`'s server matrix and packaging job:
 
 ## Publishing
 
-Publishing is off until the extension has a real publisher. Today `publisher` in `extension/package.json` is the placeholder `clippings-dev` (spec 7.1), no credentials are configured, and both publishing jobs are skipped. Each store is turned on separately, by configuring its credentials.
+Publishing is off until the extension has a real publisher. Today `publisher` in `extension/package.json` is the placeholder `clippings-dev` (spec 7.1), no publishing variables are set, and both publishing jobs are skipped. Each store is turned on separately, by a **repository variable** (Settings > Secrets and variables > Actions > Variables, at repository scope):
 
-`VSCE_PAT` and `OVSX_PAT` must be **repository** secrets (Settings > Secrets and variables > Actions > Secrets, at repository scope), not secrets scoped to the `marketplace` environment. `release.yml`'s `plan` job decides whether the `marketplace` and `open-vsx` jobs run at all, and `plan` has no `environment:` of its own — a job's `if:` and its own steps can only see repository (or organization) secrets and variables unless the job itself declares that environment, so an environment-scoped `VSCE_PAT` would make `plan` think the token doesn't exist, and marketplace publishing would silently stay off. The same reasoning is why `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` (below) are repository variables too.
+| Variable | Value | Effect on a release |
+|---|---|---|
+| `MARKETPLACE_AUTH` | `entra` (preferred) or `pat`; unset skips the Marketplace | the `marketplace` job runs, signing in with Microsoft Entra ID or with the `VSCE_PAT` secret |
+| `OPEN_VSX_PUBLISH` | `true`; unset skips Open VSX | the `open-vsx` job runs, with the `OVSX_PAT` secret |
 
-Being repository secrets is also a real exposure, plainly stated: **any** workflow run on **any** branch or tag can read a repository secret — a pushed branch that edits a workflow file to print it, or a `workflow_dispatch` run of some other workflow, not just `release.yml` on a protected ref. That's unlike `MACOS_CERTIFICATE_P12` and the other `signing`-environment secrets, or anything scoped to the `marketplace` environment: those are only readable by a job that both names the environment and satisfies its deployment rule (see [Environment protection](#environment-protection)). `VSCE_PAT` and `OVSX_PAT` have no equivalent protection — this is one more reason to prefer the Entra ID path over the PAT fallback below, since Entra's federated credential is scoped to the `marketplace` environment and its OIDC token is minted per-run, not a standing credential sitting in a repository secret. Where a PAT is unavoidable, scope it as narrowly as the store allows and rotate it periodically.
+`release.yml`'s `plan` job reads these to decide which publishing jobs run. `plan` has no `environment:`, so it can only see repository-scoped variables; that is why the switches are repository variables. `plan` refuses any other value, and it checks them on every run, dry runs included, so a dry run catches a typo. A dry run never publishes, whatever they are set to.
+
+The tokens themselves are **environment secrets**, not repository secrets: `VSCE_PAT` on the `marketplace` environment and `OVSX_PAT` on the `open-vsx` environment (Settings > Environments > `<name>` > Environment secrets). Only a job that names the environment and satisfies its deployment rule can read them (see [Environment protection](#environment-protection)). If a job's variable turns it on but its environment has no token, the job fails with an error instead of skipping.
 
 ### Switching the publisher ID
 
@@ -146,14 +151,14 @@ One-time setup:
    - entity type **Environment**, environment name `marketplace`. The release workflow's `marketplace` job runs in that environment, so the subject is `repo:GeorgeIpsum/clippings:environment:marketplace`;
    - audience `api://AzureADTokenExchange`, the default.
 3. Add the identity to the Marketplace publisher: at <https://marketplace.visualstudio.com/manage/publishers/>, open the publisher's **Members**, add the identity by its name (for an app registration, the name of the service principal) and give it the **Contributor** role. Publisher membership needs the identity to be known to Azure DevOps: if the Members dialog cannot find it, first add it as a user of an Azure DevOps organization in the same tenant (Organization settings > Users, Stakeholder access is enough).
-4. In the GitHub repository, set the **repository variables** (Settings > Secrets and variables > Actions > Variables, at repository scope, not on the `marketplace` environment — see the note above) `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`.
+4. In the GitHub repository, set the **repository variables** (Settings > Secrets and variables > Actions > Variables, at repository scope, not on the `marketplace` environment: `plan` checks them) `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`, and set `MARKETPLACE_AUTH` to `entra`. `plan` fails a run with `MARKETPLACE_AUTH=entra` unless both Azure variables are set.
 5. Protect the `marketplace` environment (see [Environment protection](#environment-protection)) so publishing can't be triggered from an arbitrary branch.
 
 A subscription is not needed: the login uses `allow-no-subscriptions`.
 
 ### Visual Studio Marketplace: personal access token (fallback)
 
-When `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` are not both set, the job falls back to a `VSCE_PAT` repository secret: an Azure DevOps personal access token with the **Marketplace > Manage** scope. Marketplace publishing has traditionally needed a global (*All accessible organizations*) token, and global tokens are retired on 1 December 2026, so treat this path as temporary. With neither configured, the `marketplace` job is skipped.
+With `MARKETPLACE_AUTH` set to `pat`, the job publishes with a `VSCE_PAT` secret on the `marketplace` environment: an Azure DevOps personal access token with the **Marketplace > Manage** scope. Marketplace publishing has traditionally needed a global (*All accessible organizations*) token, and global tokens are retired on 1 December 2026, so treat this path as temporary and prefer `entra`. With `MARKETPLACE_AUTH` unset, the `marketplace` job is skipped.
 
 ### Open VSX
 
@@ -166,20 +171,21 @@ When `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` are not both set, the job falls bac
    npx ovsx create-namespace <publisher> -p <token>
    ```
 
-5. Save the token as the repository secret `OVSX_PAT`.
+5. Create the `open-vsx` environment (Settings > Environments > New environment), give it the `v*` tag rule (see [Environment protection](#environment-protection)), and save the token there as the environment secret `OVSX_PAT`.
+6. Set the repository variable `OPEN_VSX_PUBLISH` to `true`.
 
-The `open-vsx` job publishes each package with `ovsx publish --skip-duplicate` (pinned to `ovsx@1.2.0` in the workflow), plus `--pre-release` on odd minors, and is skipped without `OVSX_PAT`. That job has no `environment:` either, so `OVSX_PAT` must likewise be a repository secret.
+The `open-vsx` job runs in the `open-vsx` environment and publishes each package with `ovsx publish --skip-duplicate` (pinned to `ovsx@1.2.0` in the workflow), plus `--pre-release` on odd minors. It is skipped unless `OPEN_VSX_PUBLISH` is `true`.
 
 ## Environment protection
 
-`marketplace` and `signing` gate OIDC sign-in and secrets, not code review: any workflow file that adds `environment: marketplace` or `environment: signing` to a job gets that environment's secrets, variables and federated-credential subject, on whatever branch or tag that workflow runs from. With no deployment rule configured, that is every branch — including a feature branch's edited copy of a workflow file. Configure a rule for both environments:
+`marketplace`, `open-vsx` and `signing` gate OIDC sign-in and secrets, not code review: any workflow file that adds `environment: marketplace`, `environment: open-vsx` or `environment: signing` to a job gets that environment's secrets, variables and federated-credential subject, on whatever branch or tag that workflow runs from. With no deployment rule configured, that is every branch — including a feature branch's edited copy of a workflow file. Configure a rule for all three environments:
 
-1. Repository Settings > Environments > select (or create) the environment, named exactly `marketplace` or `signing`.
+1. Repository Settings > Environments > select (or create) the environment, named exactly `marketplace`, `open-vsx` or `signing`.
 2. Under **Deployment branches and tags**, change *No restriction* to *Selected branches and tags*, then **Add deployment branch or tag rule**.
-3. For `marketplace`: add a **Tag** rule, pattern `v*`. The `marketplace` job only ever runs as part of a real release (a pushed `v*` tag, or a manual dry-run-off run that `plan` already refuses unless it is on a `v*` tag), so a tag-only rule is exact.
+3. For `marketplace` and `open-vsx`: add a **Tag** rule, pattern `v*`. The publishing jobs only ever run as part of a real release (a pushed `v*` tag, or a manual dry-run-off run that `plan` already refuses unless it is on a `v*` tag), so a tag-only rule is exact. The rule is what keeps `VSCE_PAT` and `OVSX_PAT` away from every branch.
 4. For `signing`: add a **Tag** rule `v*` *and* a **Branch** rule `main`. `dist.yml`'s `build` job also signs on every ordinary push to `main` (see [Where packages come from](#where-packages-come-from)), so restricting `signing` to tags alone would silently stop main-branch signing.
-5. Optionally, under **Deployment protection rules**, tick **Required reviewers** and add reviewers, on either environment or both. This holds every run — regardless of branch or tag — for a manual approval, and can be used instead of, or together with, the branch/tag rule above.
-6. Certificate, notary and PAT secrets can also be added directly on an environment's page (Settings > Environments > `<name>` > Environment secrets / Environment variables) instead of as repository-level ones — see the [Publishing](#publishing) and [Signing](#signing) sections above and below for which specific values must stay repository-scoped because a job-level `if:` reads them before the job enters its environment.
+5. Optionally, under **Deployment protection rules**, tick **Required reviewers** and add reviewers, on any of the environments. This holds every run — regardless of branch or tag — for a manual approval, and can be used instead of, or together with, the branch/tag rule above.
+6. Add the secrets on each environment's page (Settings > Environments > `<name>` > Environment secrets): `VSCE_PAT` on `marketplace`, `OVSX_PAT` on `open-vsx`, and the certificate and notary secrets on `signing`. The values that decide whether a job runs (`MARKETPLACE_AUTH`, `OPEN_VSX_PUBLISH`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `MACOS_SIGNING_IDENTITY`, `WINDOWS_SIGNING_ENDPOINT`) stay repository variables, because `plan` or a job-level `if:` reads them before any job enters its environment; see [Publishing](#publishing) and [Signing](#signing).
 
 ## Signing
 
@@ -215,7 +221,7 @@ One-time setup:
 1. Create an **Artifact Signing account** and complete **identity validation**, then create a **certificate profile** (Public Trust) in it.
 2. Use the same kind of Azure identity as for the Marketplace (it can be the same one) and give it the **Artifact Signing Certificate Profile Signer** role on the signing account.
 3. Add a federated credential for entity type **Environment**, environment name `signing` (subject `repo:GeorgeIpsum/clippings:environment:signing`). Both `sign-macos` and `sign-windows` run in that environment. `dist.yml`'s `build` job also signs on every push to `main`, so the `signing` environment's deployment rule needs to allow `main` as well as `v*` tags — see [Environment protection](#environment-protection).
-4. Set the repository variables `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` — shared with the Marketplace, and kept at repository scope there because the `plan` job needs to see them; reusing that same repository-level pair here is simplest — and:
+4. Set the repository variables `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` — shared with the Marketplace, and kept at repository scope there because the `plan` job checks them; reusing that same repository-level pair here is simplest — and:
 
 | Variable | Value |
 |---|---|
