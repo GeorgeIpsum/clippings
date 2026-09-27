@@ -1,0 +1,10 @@
+# Pins the exact stable Rust version CI builds and tests with. GitHub
+# Actions jobs install this same version explicitly via
+# `dtolnay/rust-toolchain@<version>` (that action does not read this file);
+# it documents the pinned version as a single source of truth and drives
+# toolchain selection for anyone building with rustup. Local development on
+# this repo mostly uses Homebrew's Rust, which has no rustup and ignores
+# this file entirely, so it stays harmless there.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy", "llvm-tools"]

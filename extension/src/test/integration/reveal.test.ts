@@ -9,6 +9,11 @@ async function open(path: string): Promise<vscode.TextEditor> {
   return vscode.window.showTextDocument(vscode.Uri.file(path));
 }
 
+/** A path as node IDs spell it, with `/` separators. */
+function slashed(path: string): string {
+  return process.platform === 'win32' ? path.replaceAll('\\', '/') : path;
+}
+
 function selected(api: ClippingsApi): string | undefined {
   return api.test.tree.view.selection[0];
 }
@@ -41,7 +46,7 @@ describe('reveal, track file and todo clicks', () => {
   it('tracks the active file in the tree', async () => {
     const path = workspacePath('src', 'util', 'strings.py');
     await open(path);
-    await waitFor('strings.py selected', () => selected(api)?.endsWith(`/f:${path}`), [
+    await waitFor('strings.py selected', () => selected(api)?.endsWith(`/f:${slashed(path)}`), [
       api.test.tree.view.onDidChangeSelection,
     ]);
   });
@@ -75,9 +80,9 @@ describe('reveal, track file and todo clicks', () => {
     try {
       const path = workspacePath('docs', 'plan.md');
       await open(path);
-      assert.ok(!selected(api)?.endsWith(`/f:${path}`));
+      assert.ok(!selected(api)?.endsWith(`/f:${slashed(path)}`));
       await vscode.commands.executeCommand('clippings.reveal');
-      await waitFor('plan.md selected', () => selected(api)?.endsWith(`/f:${path}`), [
+      await waitFor('plan.md selected', () => selected(api)?.endsWith(`/f:${slashed(path)}`), [
         api.test.tree.view.onDidChangeSelection,
       ]);
     } finally {

@@ -5,6 +5,15 @@
   "version": "0.1.0",
   "publisher": "clippings-dev",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GeorgeIpsum/clippings.git",
+    "directory": "extension"
+  },
+  "homepage": "https://github.com/GeorgeIpsum/clippings/tree/main/extension#readme",
+  "bugs": {
+    "url": "https://github.com/GeorgeIpsum/clippings/issues"
+  },
   "private": true,
   "categories": [
     "Other"
@@ -1292,9 +1301,11 @@
     "typecheck": "tsc --noEmit -p .",
     "dev": "cargo build --manifest-path ../Cargo.toml -p clippings",
     "test:unit": "mocha --ui bdd \"out/test/unit/**/*.test.js\"",
+    "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
     "test:integration": "vscode-test",
-    "test": "pnpm dev && pnpm typecheck && pnpm build && pnpm test:unit && pnpm test:integration",
-    "package": "vsce package --no-dependencies"
+    "test:pathforms": "vscode-test --config .vscode-test.pathforms.mjs",
+    "test": "pnpm dev && pnpm typecheck && pnpm build && pnpm test:unit && pnpm test:scripts && pnpm test:integration && pnpm test:pathforms",
+    "package": "node scripts/package.mjs"
   },
   "packageManager": "pnpm@10.27.0",
   "dependencies": {

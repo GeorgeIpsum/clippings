@@ -1,0 +1,276 @@
+# Builds the server for the nine VS Code targets and the ten VSIX packages
+# (spec 8.1, 8.2). Called by the release workflow and by CI on main.
+#
+# Artifacts:
+#   server-<target>    the stripped server binary
+#   symbols-<target>   its debug symbols (dSYM zip, PDB or .debug file)
+#   vsix               the nine platform packages and the universal package
+#
+# Signing is optional and off until configured (docs/release.md, "Signing"):
+# macOS binaries are signed and notarized in the separate `sign-macos` job
+# when the MACOS_SIGNING_IDENTITY variable exists, and Windows binaries are
+# signed with Azure Artifact Signing in `sign-windows` when the
+# WINDOWS_SIGNING_ENDPOINT variable exists. Both run in the `signing`
+# environment so their credentials never reach the ordinary `server` matrix
+# job or its third-party actions. The intended setup keeps the macOS
+# certificate and notary secrets on the `signing` environment itself;
+# callers forwarding them by name explicitly (below), as dist.yml and
+# release.yml do, is the fallback. Callers must grant `id-token: write`.
+name: Build
+
+on:
+  workflow_call:
+    secrets:
+      MACOS_CERTIFICATE_P12:
+        required: false
+      MACOS_CERTIFICATE_PASSWORD:
+        required: false
+      MACOS_NOTARY_APPLE_ID:
+        required: false
+      MACOS_NOTARY_PASSWORD:
+        required: false
+    outputs:
+      version:
+        description: The extension version, from package.json.
+        value: ${{ jobs.package.outputs.version }}
+      pre-release:
+        description: "'true' when the version is a pre-release (odd minor)."
+        value: ${{ jobs.package.outputs.pre-release }}
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: server (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: win32-x64, triple: x86_64-pc-windows-msvc, os: windows-latest }
+          # The x64 runner cannot run an Arm64 binary; `probe-win32-arm64` does.
+          - { target: win32-arm64, triple: aarch64-pc-windows-msvc, os: windows-latest, probe: --no-probe }
+          - { target: darwin-x64, triple: x86_64-apple-darwin, os: macos-latest }
+          - { target: darwin-arm64, triple: aarch64-apple-darwin, os: macos-latest }
+          - { target: linux-x64, triple: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: linux-arm64, triple: aarch64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: linux-armhf, triple: armv7-unknown-linux-gnueabihf, os: ubuntu-latest }
+          - { target: alpine-x64, triple: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: alpine-arm64, triple: aarch64-unknown-linux-musl, os: ubuntu-latest }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          targets: ${{ matrix.triple }}
+          components: ${{ runner.os == 'Linux' && 'llvm-tools' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install cargo-zigbuild
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install cargo-zigbuild==0.23.4 ziglang==0.15.2
+          echo "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
+      - name: Set up qemu for the Arm probes
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,arm
+      - name: Build
+        run: scripts/dist/build.sh ${{ matrix.target }} dist
+      - name: Check glibc floor and probe
+        run: scripts/dist/check.sh ${{ matrix.target }} dist/${{ matrix.target }}/clippings${{ startsWith(matrix.target, 'win32-') && '.exe' || '' }} ${{ matrix.probe }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.target }}
+          path: dist/${{ matrix.target }}/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: symbols-${{ matrix.target }}
+          path: dist/symbols/
+          if-no-files-found: error
+
+  # Runs only when macOS signing is configured, in the `signing` environment.
+  # The intended setup keeps the certificate and notary secrets on that
+  # environment directly; a caller forwarding its own repository secrets by
+  # name (see `on.workflow_call.secrets` above) is the fallback. A job of
+  # its own, not a step in `server`: a job-level `if` can read a plain
+  # repository variable like MACOS_SIGNING_IDENTITY but not a secret gated
+  # behind an environment, and the certificate should never be in scope for
+  # the ordinary `server` matrix job's third-party actions (rust-cache,
+  # setup-qemu, rust-toolchain).
+  sign-macos:
+    needs: server
+    if: vars.MACOS_SIGNING_IDENTITY != ''
+    environment: signing
+    permissions:
+      contents: read
+    runs-on: macos-latest
+    # Two sequential 30-minute notary waits (sign-macos.sh's
+    # `notarytool submit --wait --timeout 30m`), plus checkout and build.
+    timeout-minutes: 70
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: server-darwin-*
+          path: dist
+      - name: Restore the execute bit
+        # upload-artifact/download-artifact don't preserve it.
+        run: chmod +x dist/server-darwin-*/clippings
+      - name: Sign and notarize
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          MACOS_NOTARY_TEAM_ID: ${{ vars.MACOS_NOTARY_TEAM_ID }}
+        run: |
+          scripts/dist/sign-macos.sh dist/server-darwin-x64/clippings
+          scripts/dist/sign-macos.sh dist/server-darwin-arm64/clippings
+      - name: Check the signed binaries
+        run: |
+          scripts/dist/check.sh darwin-x64 dist/server-darwin-x64/clippings
+          scripts/dist/check.sh darwin-arm64 dist/server-darwin-arm64/clippings
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-darwin-x64
+          path: dist/server-darwin-x64/
+          overwrite: true
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-darwin-arm64
+          path: dist/server-darwin-arm64/
+          overwrite: true
+          if-no-files-found: error
+
+  # Runs only when Windows signing is configured, in the `signing`
+  # environment that the Azure identity's federated credential names.
+  sign-windows:
+    needs: server
+    if: vars.WINDOWS_SIGNING_ENDPOINT != ''
+    environment: signing
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: server-win32-*
+          path: dist
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.WINDOWS_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Check the signed binaries
+        run: |
+          scripts/dist/check.sh win32-x64 dist/server-win32-x64/clippings.exe
+          scripts/dist/check.sh win32-arm64 dist/server-win32-arm64/clippings.exe --no-probe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-win32-x64
+          path: dist/server-win32-x64/
+          overwrite: true
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-win32-arm64
+          path: dist/server-win32-arm64/
+          overwrite: true
+          if-no-files-found: error
+
+  probe-win32-arm64:
+    needs: [server, sign-windows]
+    # After signing when it runs; `sign-windows` is skipped when unconfigured.
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: windows-11-arm
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: server-win32-arm64
+          path: dist/win32-arm64
+      - run: scripts/dist/check.sh win32-arm64 dist/win32-arm64/clippings.exe
+
+  package:
+    needs: [server, sign-macos, sign-windows, probe-win32-arm64]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      pre-release: ${{ steps.version.outputs.pre-release }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: extension/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.3
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - run: pnpm -C extension install --frozen-lockfile
+      - id: version
+        run: node extension/scripts/version.mjs
+      # One bundle serves all ten packages.
+      - run: pnpm -C extension build --production
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: server-*
+          path: dist/server
+      - name: Package
+        run: |
+          # vsix.mjs's TARGETS is the list of targets; the server matrix
+          # above must build each of them.
+          list=$(node --input-type=module -e 'import { TARGETS } from "./extension/scripts/vsix.mjs"; console.log(TARGETS.join(" "))')
+          read -ra targets <<<"$list"
+          for target in "${targets[@]}"; do
+            exe=clippings
+            [[ $target == win32-* ]] && exe=clippings.exe
+            node extension/scripts/package.mjs --target "$target" --server "dist/server/server-$target/$exe" --out dist/vsix
+          done
+          node extension/scripts/package.mjs --universal --out dist/vsix
+          ls -l dist/vsix
+          expected=$((${#targets[@]} + 1))
+          count=$(find dist/vsix -maxdepth 1 -name '*.vsix' | wc -l)
+          [[ $count -eq $expected ]] || { echo "expected $expected .vsix packages, found $count" >&2; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: dist/vsix/*.vsix
+          if-no-files-found: error

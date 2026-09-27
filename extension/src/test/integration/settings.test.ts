@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 import type { ClippingsApi } from '../../testApi';
 import { DEFAULT_TREE } from './fixture';
-import { getApi, setSetting, treeBecomes, waitFor, whenIdle, workspacePath } from './helpers';
+import { getApi, setSetting, treeBecomes, waitFor, whenIdle, windowCaughtUp, workspacePath } from './helpers';
 
 const APP_TODOS = [
   '      TODO (alice) wire up the router',
@@ -105,20 +105,27 @@ describe('setting commands', () => {
   });
 
   it('goes to the next and previous todo without wrapping', async () => {
+    await whenIdle(api);
     const editor = await vscode.window.showTextDocument(vscode.Uri.file(workspacePath('src', 'app.ts')));
-    const at = () => [editor.selection.active.line, editor.selection.active.character];
+    // Each step reads the selection only once the window has caught up: the
+    // host's copy can briefly revert to an older one (see `windowCaughtUp`),
+    // and the next Go To would start from there.
+    const at = async () => {
+      await windowCaughtUp();
+      return [editor.selection.active.line, editor.selection.active.character];
+    };
+    const go = async (command: 'clippings.goToNext' | 'clippings.goToPrevious') => {
+      await vscode.commands.executeCommand(command);
+      return at();
+    };
     editor.selection = new vscode.Selection(0, 0, 0, 0);
-    await vscode.commands.executeCommand('clippings.goToNext');
-    assert.deepEqual(at(), [1, 2]);
-    await vscode.commands.executeCommand('clippings.goToNext');
-    assert.deepEqual(at(), [3, 2]);
-    await vscode.commands.executeCommand('clippings.goToNext');
-    await vscode.commands.executeCommand('clippings.goToNext');
-    assert.deepEqual(at(), [7, 2], 'stops at the last todo');
-    await vscode.commands.executeCommand('clippings.goToPrevious');
-    assert.deepEqual(at(), [3, 2]);
-    await vscode.commands.executeCommand('clippings.goToPrevious');
-    await vscode.commands.executeCommand('clippings.goToPrevious');
-    assert.deepEqual(at(), [1, 2], 'stops at the first todo');
+    assert.deepEqual(await at(), [0, 0]);
+    assert.deepEqual(await go('clippings.goToNext'), [1, 2]);
+    assert.deepEqual(await go('clippings.goToNext'), [3, 2]);
+    assert.deepEqual(await go('clippings.goToNext'), [7, 2]);
+    assert.deepEqual(await go('clippings.goToNext'), [7, 2], 'stops at the last todo');
+    assert.deepEqual(await go('clippings.goToPrevious'), [3, 2]);
+    assert.deepEqual(await go('clippings.goToPrevious'), [1, 2]);
+    assert.deepEqual(await go('clippings.goToPrevious'), [1, 2], 'stops at the first todo');
   });
 });

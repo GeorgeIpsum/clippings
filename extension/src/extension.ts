@@ -56,6 +56,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     (settings) => server.configure(settings),
   );
   let lastStatus: StatusParams | undefined;
+  let statusFromRunningServer = false;
   const contextKeys = new ContextKeys();
   const updateContext = () => void contextKeys.apply(contextValues(sync.current, lastStatus));
   sync.onPush(updateContext);
@@ -111,8 +112,11 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     statusController,
     registerStatusBarCommand({ sync, writer, prompts, view: treeView }),
     ...registerScanCommands(server),
+    // A new server has not reported yet: `lastStatus` is its predecessor's.
+    server.onRunning(() => (statusFromRunningServer = false)),
     server.onStatus((s) => {
       lastStatus = s;
+      statusFromRunningServer = true;
       updateContext();
       statusController.update(s);
     }),
@@ -188,6 +192,9 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         onGaveUp: server.onGaveUp,
         setStartTimeout: (ms) => (server.startTimeoutMs = ms),
         status: () => lastStatus,
+        get reported() {
+          return statusFromRunningServer;
+        },
       },
       tree: {
         view: treeView,

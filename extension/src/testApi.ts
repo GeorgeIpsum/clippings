@@ -20,6 +20,11 @@ export interface ServerHooks {
   /** Shortens the start timeout (`START_TIMEOUT_MS`) so tests need not wait for it. */
   setStartTimeout(ms: number): void;
   status(): StatusParams | undefined;
+  /**
+   * Whether the running server has sent a status. Until it has, `status()`
+   * is the last one from the server before it, which a restart replaced.
+   */
+  readonly reported: boolean;
 }
 
 export interface TreeHooks {

@@ -44,19 +44,46 @@ describe('context keys', () => {
     await vscode.commands.executeCommand('clippings.resetCache');
     assert.equal(key('tags-only'), false);
     assert.equal(key('grouped-by-tag'), false);
+    // The keys follow local view state at once; the tree catches up only
+    // after the server's debounced rebuilds, so settle it for the next test.
+    await treeBecomes(api, DEFAULT_TREE);
   });
 
   it('follow the filters', async () => {
-    api.test.prompts.script('guide');
-    await vscode.commands.executeCommand('clippings.filter');
-    assert.equal(key('filtered'), true);
-    assert.equal(key('global-filter-active'), 'guide');
-    const lib = await itemAt(api, 'workspace', 'lib');
-    await vscode.commands.executeCommand('clippings.excludeThisFolder', lib.id);
-    assert.equal(key('folder-filter-active'), true);
-    await vscode.commands.executeCommand('clippings.resetAllFilters');
+    // The text filter must keep `lib` visible: it only matches text in
+    // `lib/notes.rs`, so the settled, filtered tree still has it. Context
+    // keys apply from local view state the moment the command resolves, but
+    // the tree itself only catches up once the server's debounced view
+    // rebuild lands (spec 5.10's `VIEW_DELAY`), so `lib` is looked up only
+    // once `treeBecomes` confirms the tree has actually settled into that
+    // filtered shape - otherwise `itemAt` can race a still-stale tree (for
+    // example still showing the previous test's tags-only view, with no
+    // `workspace` root at all yet).
+    api.test.prompts.script('long note');
+    try {
+      await vscode.commands.executeCommand('clippings.filter');
+      assert.equal(key('filtered'), true);
+      assert.equal(key('global-filter-active'), 'long note');
+      await treeBecomes(api, [
+        '(Scan mode: workspace and open files)',
+        '(1 filter active)',
+        'workspace',
+        '  lib',
+        '    notes.rs',
+        '      TODO first line of a long note',
+      ]);
+      const lib = await itemAt(api, 'workspace', 'lib');
+      await vscode.commands.executeCommand('clippings.excludeThisFolder', lib.id);
+      assert.equal(key('folder-filter-active'), true);
+    } finally {
+      // A filter left behind would hide the sub-tags the next test waits for.
+      await vscode.commands.executeCommand('clippings.resetAllFilters');
+    }
     assert.equal(key('filtered'), false);
     assert.equal(key('folder-filter-active'), false);
+    // Leaves the tree settled, so the next test starts from a known state
+    // rather than racing this test's own debounced rebuild.
+    await treeBecomes(api, DEFAULT_TREE);
   });
 
   it('follow settings and the server status', async () => {

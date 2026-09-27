@@ -1,0 +1,266 @@
+# Releases Clippings (spec 8.2). A `v*` tag builds all ten packages,
+# attaches them and the debug symbols to a GitHub release, and publishes to
+# the Marketplace and Open VSX when their repository variables turn them on
+# (docs/release.md, Publishing). A manual run
+# is a dry run by default: it builds, checks and uploads the packages as
+# workflow artifacts, and skips the release and publish jobs.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Build and check only; create no release and publish nothing.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # To read the tagged commit's CI check runs.
+      checks: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      pre-release: ${{ steps.version.outputs.pre-release }}
+      release: ${{ steps.plan.outputs.release }}
+      marketplace: ${{ steps.plan.outputs.marketplace }}
+      open-vsx: ${{ steps.plan.outputs.open-vsx }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The whole history, so the tag can be checked against origin/main.
+          fetch-depth: 0
+      # build.yml runs no tests, so a tag may only release a commit that is
+      # on main and whose CI (ci.yml's rust and extension jobs) passed.
+      - name: Check the tag is on main and CI passed
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not on main; tag a commit on main."
+            exit 1
+          fi
+          # filter=latest (the default) keeps only each job's latest run.
+          runs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+            --jq '.check_runs[] | select(.app.slug == "github-actions") | select(.name | test("^(rust|extension) ")) | [.name, .status, .conclusion // "none"] | @tsv')
+          printf '%s\n' "$runs"
+          ok=true
+          for job in rust extension; do
+            if ! grep -q "^$job " <<<"$runs"; then
+              echo "::error::No $job check run on $GITHUB_SHA; CI has not run on this commit."
+              ok=false
+            fi
+          done
+          if awk -F '\t' '$2 != "completed" || $3 != "success" { bad = 1 } END { exit !bad }' <<<"$runs"; then
+            echo "::error::CI has not passed on $GITHUB_SHA; wait for it or fix it before tagging."
+            ok=false
+          fi
+          [[ $ok == true ]]
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.3
+      - name: Check the version
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ $REF_TYPE == tag ]]; then
+            node extension/scripts/version.mjs --tag "$REF_NAME"
+          else
+            node extension/scripts/version.mjs
+          fi
+      - name: Decide what runs
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          HAS_ENTRA: ${{ vars.AZURE_CLIENT_ID != '' && vars.AZURE_TENANT_ID != '' }}
+          # Repository variables, not secret presence, turn publishing on,
+          # so the tokens can be environment secrets that plan cannot see.
+          MARKETPLACE_AUTH: ${{ vars.MARKETPLACE_AUTH }}
+          OPEN_VSX_PUBLISH: ${{ vars.OPEN_VSX_PUBLISH }}
+        run: |
+          # A tag push releases. A manual run releases only when dry-run is
+          # off, and only from a tag. Anything else is a dry run.
+          release=false
+          if [[ $EVENT == workflow_dispatch && $DRY_RUN == false ]]; then
+            if [[ $REF_TYPE != tag ]]; then
+              echo "::error::Only a v* tag can be released; run from a tag or keep dry-run on."
+              exit 1
+            fi
+            release=true
+          elif [[ $EVENT == push && $REF_TYPE == tag ]]; then
+            release=true
+          fi
+          # MARKETPLACE_AUTH picks how the Marketplace job signs in:
+          # `entra` (preferred: Microsoft Entra ID through OIDC, no stored
+          # secret) or `pat` (the fallback; Azure DevOps global PATs stop
+          # working on 1 December 2026). Unset skips the Marketplace. The
+          # settings are checked on every run, so a dry run catches a typo.
+          case $MARKETPLACE_AUTH in
+            '' | pat) ;;
+            entra)
+              if [[ $HAS_ENTRA != true ]]; then
+                echo "::error::MARKETPLACE_AUTH is entra, but AZURE_CLIENT_ID and AZURE_TENANT_ID are not both set."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::MARKETPLACE_AUTH must be entra, pat or unset, not '$MARKETPLACE_AUTH'."
+              exit 1
+              ;;
+          esac
+          if [[ -n $OPEN_VSX_PUBLISH && $OPEN_VSX_PUBLISH != true ]]; then
+            echo "::error::OPEN_VSX_PUBLISH must be true or unset, not '$OPEN_VSX_PUBLISH'."
+            exit 1
+          fi
+          marketplace=none open_vsx=false
+          if [[ $release == true ]]; then
+            marketplace=${MARKETPLACE_AUTH:-none}
+            [[ $OPEN_VSX_PUBLISH == true ]] && open_vsx=true
+          fi
+          {
+            echo "release=$release"
+            echo "marketplace=$marketplace"
+            echo "open-vsx=$open_vsx"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    uses: ./.github/workflows/build.yml
+    # For the optional signing steps; build.yml declares these by name.
+    secrets:
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+      MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+    permissions:
+      contents: read
+      id-token: write
+
+  release:
+    needs: [plan, build]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: vsix
+          path: assets
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: symbols-*
+          path: assets
+          merge-multiple: true
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          PRE_RELEASE: ${{ needs.plan.outputs.pre-release }}
+        run: |
+          ls -l assets
+          flags=()
+          [[ $PRE_RELEASE == true ]] && flags+=(--prerelease)
+          gh release create "$TAG" assets/* --verify-tag --title "Clippings ${TAG#v}" --generate-notes "${flags[@]}"
+
+  # Publishing jobs run only when their repository variables turn them on
+  # (MARKETPLACE_AUTH, OPEN_VSX_PUBLISH). Until the publisher `clippings-dev`
+  # is replaced by a real one (spec 7.1), neither is set and both jobs are
+  # skipped. Each job's token is a secret of its own environment, which a
+  # `v*` tag rule protects. See docs/release.md.
+  marketplace:
+    needs: [plan, release]
+    if: needs.plan.outputs.marketplace != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The Azure identity's federated credential names this environment,
+    # which also holds the VSCE_PAT secret.
+    environment: marketplace
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: extension/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.3
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - run: pnpm -C extension install --frozen-lockfile
+      - uses: actions/download-artifact@v5
+        with:
+          name: vsix
+          path: vsix
+      - name: Sign in to Microsoft Entra ID
+        if: needs.plan.outputs.marketplace == 'entra'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Publish to the Visual Studio Marketplace
+        env:
+          AUTH: ${{ needs.plan.outputs.marketplace }}
+          VSCE_PAT: ${{ needs.plan.outputs.marketplace == 'pat' && secrets.VSCE_PAT || '' }}
+          PRE_RELEASE: ${{ needs.plan.outputs.pre-release }}
+        run: |
+          if [[ $AUTH == pat && -z $VSCE_PAT ]]; then
+            echo "::error::MARKETPLACE_AUTH is pat, but the marketplace environment has no VSCE_PAT secret."
+            exit 1
+          fi
+          flags=()
+          [[ $AUTH == entra ]] && flags+=(--azure-credential)
+          [[ $PRE_RELEASE == true ]] && flags+=(--pre-release)
+          pnpm -C extension exec vsce publish --packagePath "$PWD"/vsix/*.vsix --no-dependencies --skip-duplicate "${flags[@]}"
+
+  open-vsx:
+    needs: [plan, release]
+    if: needs.plan.outputs.open-vsx == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Holds the OVSX_PAT secret.
+    environment: open-vsx
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.3
+      - uses: actions/download-artifact@v5
+        with:
+          name: vsix
+          path: vsix
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+          PRE_RELEASE: ${{ needs.plan.outputs.pre-release }}
+        run: |
+          if [[ -z $OVSX_PAT ]]; then
+            echo "::error::OPEN_VSX_PUBLISH is true, but the open-vsx environment has no OVSX_PAT secret."
+            exit 1
+          fi
+          flags=()
+          [[ $PRE_RELEASE == true ]] && flags+=(--pre-release)
+          for vsix in vsix/*.vsix; do
+            npx --yes ovsx@1.2.0 publish --packagePath "$vsix" --no-dependencies --skip-duplicate "${flags[@]}"
+          done

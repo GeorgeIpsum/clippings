@@ -6,7 +6,7 @@ use crate::model::{ExtraLine, Todo};
 use crate::position::Position;
 use crate::settings::{Attributes, RevealBehaviour, Settings};
 use crate::styles::IconDescriptor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn pos(line: u32, character: u32) -> Position {
     Position { line, character }
@@ -35,8 +35,8 @@ impl Fixture {
     fn new() -> Self {
         Fixture { files: Vec::new() }
     }
-    fn file(mut self, path: &str, todos: Vec<Todo>) -> Self {
-        self.files.push((PathBuf::from(path), todos));
+    fn file(mut self, path: impl AsRef<Path>, todos: Vec<Todo>) -> Self {
+        self.files.push((path.as_ref().to_path_buf(), todos));
         self
     }
     fn build(&self, s: &Settings) -> View {
@@ -131,6 +131,24 @@ fn flat_view_uses_path_labels() {
         labels(&v, Some("w:file:///w")),
         vec!["README.md", "a.ts (src)", "b.ts (src)"]
     );
+}
+
+#[test]
+fn flat_view_directory_labels_use_forward_slashes_on_every_platform() {
+    // Built with `PathBuf::join`, not a string literal with `/` already
+    // baked in: on Windows, `join` inserts the platform's own separator
+    // (`\`), so `to_string_lossy` alone would print `src\util` there. Only
+    // `slash_path` normalises that back to `/`, matching folder labels and
+    // node IDs (spec 5.12, ruling 12). A single-segment directory (as in
+    // `flat_view_uses_path_labels`) can't tell the two apart: there is no
+    // separator to get wrong until the directory has more than one segment.
+    let mut s = quiet();
+    s.view_state.flat = Some(true);
+    let nested = PathBuf::from("/w").join("src").join("util").join("x.ts");
+    let v = Fixture::new()
+        .file(nested, vec![todo(0, "TODO", "nested")])
+        .build(&s);
+    assert_eq!(labels(&v, Some("w:file:///w")), vec!["x.ts (src/util)"]);
 }
 
 #[test]

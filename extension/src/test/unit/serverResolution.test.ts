@@ -33,7 +33,7 @@ describe('server candidates', () => {
       env: { CLIPPINGS_SERVER_PATH: '/env/clippings', PATH: ['/a', '/b'].join(delimiter) },
       setting: { value: '~/bin/clippings', fromWorkspace: false },
       development: true,
-      exists: (p) => ['/ext/bin/clippings', '/ext/bin/platform.ok', join('/b', 'clippings')].includes(p),
+      exists: (p) => [join('/ext', 'bin', 'clippings'), join('/ext', 'bin', 'platform.ok'), join('/b', 'clippings')].includes(p),
     });
     assert.deepEqual(list, [
       { source: 'environment', path: '/env/clippings' },

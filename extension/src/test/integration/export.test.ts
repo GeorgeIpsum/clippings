@@ -30,7 +30,15 @@ describe('export', () => {
   it('opens the visible tree as a text tree named by the formatted export path', async () => {
     const document = await exported();
     const path = document.uri.path;
-    assert.ok(path.startsWith(homedir().replaceAll('\\', '/')) || path.startsWith('/' + homedir()), path);
+    // On Windows the URI path is `/c:/Users/...` for a home of `C:\Users\...`,
+    // and the drive letter's case can differ between the two; macOS and
+    // Linux paths are case-sensitive, so only Windows folds case here.
+    const home = homedir().replaceAll('\\', '/').replace(/^(?!\/)/, '/');
+    if (process.platform === 'win32') {
+      assert.ok(path.toLowerCase().startsWith(home.toLowerCase()), path);
+    } else {
+      assert.ok(path.startsWith(home), path);
+    }
     assert.match(path, /\/todo-tree-\d{8}-\d{4}\.txt$/);
     const text = document.getText();
     assert.match(text, /^└─ workspace\n/);
