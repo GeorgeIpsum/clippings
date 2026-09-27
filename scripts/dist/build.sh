@@ -19,7 +19,11 @@
 # numbers need the symbols file. MSVC binaries never carry a symbol table:
 # Windows backtraces name functions only when the PDB is beside the binary.
 #
-# Usage: scripts/dist/build.sh <vscode-target> [out-dir]   (out-dir: dist)
+# Cargo's output is found in $CARGO_TARGET_DIR when that is set.
+#
+# Usage: scripts/dist/build.sh <vscode-target> [out-dir]
+#   out-dir defaults to dist; a relative one is relative to the current
+#   directory, like any other path argument.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -32,7 +36,13 @@ out=${2:-dist}
 resolve_target "$target"
 mkdir -p "$out/$target" "$out/symbols"
 out=$(cd "$out" && pwd)
-built=$root/target/$triple/dist
+# Cargo reads a relative CARGO_TARGET_DIR against the current directory.
+target_dir=${CARGO_TARGET_DIR:-$root/target}
+case "$target_dir" in
+  /* | [A-Za-z]:*) ;;
+  *) target_dir=$PWD/$target_dir ;;
+esac
+built=$target_dir/$triple/dist
 
 cargo_args=(--locked --profile dist -p clippings --manifest-path "$root/Cargo.toml")
 
