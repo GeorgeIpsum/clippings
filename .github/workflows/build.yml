@@ -255,15 +255,20 @@ jobs:
           path: dist/server
       - name: Package
         run: |
-          for target in win32-x64 win32-arm64 linux-x64 linux-arm64 linux-armhf alpine-x64 alpine-arm64 darwin-x64 darwin-arm64; do
+          # vsix.mjs's TARGETS is the list of targets; the server matrix
+          # above must build each of them.
+          list=$(node --input-type=module -e 'import { TARGETS } from "./extension/scripts/vsix.mjs"; console.log(TARGETS.join(" "))')
+          read -ra targets <<<"$list"
+          for target in "${targets[@]}"; do
             exe=clippings
             [[ $target == win32-* ]] && exe=clippings.exe
             node extension/scripts/package.mjs --target "$target" --server "dist/server/server-$target/$exe" --out dist/vsix
           done
           node extension/scripts/package.mjs --universal --out dist/vsix
           ls -l dist/vsix
+          expected=$((${#targets[@]} + 1))
           count=$(find dist/vsix -maxdepth 1 -name '*.vsix' | wc -l)
-          [[ $count -eq 10 ]] || { echo "expected 10 .vsix packages, found $count" >&2; exit 1; }
+          [[ $count -eq $expected ]] || { echo "expected $expected .vsix packages, found $count" >&2; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: vsix
