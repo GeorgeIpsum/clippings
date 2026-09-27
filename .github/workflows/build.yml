@@ -7,14 +7,26 @@
 #   vsix               the nine platform packages and the universal package
 #
 # Signing is optional and off until configured (docs/release.md, "Signing"):
-# macOS binaries are signed and notarized when the MACOS_CERTIFICATE_P12
-# secret exists, and Windows binaries are signed with Azure Artifact Signing
-# when the WINDOWS_SIGNING_ENDPOINT variable exists. Callers pass
-# `secrets: inherit` and grant `id-token: write`.
+# macOS binaries are signed and notarized in the separate `sign-macos` job
+# when the MACOS_SIGNING_IDENTITY variable exists, and Windows binaries are
+# signed with Azure Artifact Signing in `sign-windows` when the
+# WINDOWS_SIGNING_ENDPOINT variable exists. Both run in the `signing`
+# environment so their credentials never reach the ordinary `server` matrix
+# job or its third-party actions. Callers pass the macOS signing secrets
+# explicitly (below) and grant `id-token: write`.
 name: Build
 
 on:
   workflow_call:
+    secrets:
+      MACOS_CERTIFICATE_P12:
+        required: false
+      MACOS_CERTIFICATE_PASSWORD:
+        required: false
+      MACOS_NOTARY_APPLE_ID:
+        required: false
+      MACOS_NOTARY_PASSWORD:
+        required: false
     outputs:
       version:
         description: The extension version, from package.json.
@@ -70,21 +82,6 @@ jobs:
           platforms: arm64,arm
       - name: Build
         run: scripts/dist/build.sh ${{ matrix.target }} dist
-      - name: Sign and notarize
-        if: runner.os == 'macOS'
-        env:
-          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
-          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
-          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
-          MACOS_NOTARY_TEAM_ID: ${{ vars.MACOS_NOTARY_TEAM_ID }}
-        run: |
-          if [[ -z $MACOS_CERTIFICATE_P12 ]]; then
-            echo "macOS signing is not configured (no MACOS_CERTIFICATE_P12 secret); the binary stays ad-hoc signed."
-            exit 0
-          fi
-          scripts/dist/sign-macos.sh dist/${{ matrix.target }}/clippings
       - name: Check glibc floor and probe
         run: scripts/dist/check.sh ${{ matrix.target }} dist/${{ matrix.target }}/clippings${{ startsWith(matrix.target, 'win32-') && '.exe' || '' }} ${{ matrix.probe }}
       - uses: actions/upload-artifact@v4
@@ -98,6 +95,56 @@ jobs:
           path: dist/symbols/
           if-no-files-found: error
 
+  # Runs only when macOS signing is configured, in the `signing` environment
+  # that holds the certificate and notary secrets. A job of its own, not a
+  # step in `server`: a job-level `if` can read a plain repository variable
+  # like MACOS_SIGNING_IDENTITY but not a secret gated behind an
+  # environment, and the certificate should never be in scope for the
+  # ordinary `server` matrix job's third-party actions (rust-cache,
+  # setup-qemu, rust-toolchain).
+  sign-macos:
+    needs: server
+    if: vars.MACOS_SIGNING_IDENTITY != ''
+    environment: signing
+    permissions:
+      contents: read
+    runs-on: macos-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: server-darwin-*
+          path: dist
+      - name: Sign and notarize
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          MACOS_NOTARY_TEAM_ID: ${{ vars.MACOS_NOTARY_TEAM_ID }}
+        run: |
+          scripts/dist/sign-macos.sh dist/server-darwin-x64/clippings
+          scripts/dist/sign-macos.sh dist/server-darwin-arm64/clippings
+      - name: Check the signed binaries
+        run: |
+          scripts/dist/check.sh darwin-x64 dist/server-darwin-x64/clippings
+          scripts/dist/check.sh darwin-arm64 dist/server-darwin-arm64/clippings
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-darwin-x64
+          path: dist/server-darwin-x64/
+          overwrite: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-darwin-arm64
+          path: dist/server-darwin-arm64/
+          overwrite: true
+
   # Runs only when Windows signing is configured, in the `signing`
   # environment that the Azure identity's federated credential names.
   sign-windows:
@@ -108,6 +155,7 @@ jobs:
       contents: read
       id-token: write
     runs-on: windows-latest
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
@@ -153,6 +201,7 @@ jobs:
     # After signing when it runs; `sign-windows` is skipped when unconfigured.
     if: ${{ !cancelled() && !failure() }}
     runs-on: windows-11-arm
+    timeout-minutes: 10
     defaults:
       run:
         shell: bash
@@ -165,7 +214,7 @@ jobs:
       - run: scripts/dist/check.sh win32-arm64 dist/win32-arm64/clippings.exe
 
   package:
-    needs: [server, sign-windows, probe-win32-arm64]
+    needs: [server, sign-macos, sign-windows, probe-win32-arm64]
     if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15

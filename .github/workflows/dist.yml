@@ -1,0 +1,39 @@
+# Builds the server for the nine targets and packages the ten VSIX files
+# (spec 8.1, 8.2), on every push to main: they take longer than the tests,
+# and the release workflow builds them again from its tag.
+#
+# Kept apart from ci.yml, which also triggers on `pull_request`: a
+# reusable-workflow call that requests `id-token: write` (for macOS and
+# Windows signing) inside a workflow with a `pull_request` trigger can have
+# its whole run rejected at load time by GitHub's permission cap on fork and
+# Dependabot PRs, even though this job only ever runs on pushes to main. A
+# push-only workflow sidesteps that.
+#
+# This job runs independently of ci.yml's `rust` and `extension` jobs: a
+# `workflow_call` job can only `needs:` jobs defined in its own workflow
+# file, not another workflow's run, so there is no cheap way to gate this on
+# their result. ci.yml already runs those same checks on every push to
+# main, so a red `dist` run here doesn't ship anything by itself and a red
+# ci.yml run is visible on its own; accepting that duplication is simpler
+# than wiring a cross-workflow gate (`workflow_run`, or re-running the
+# checks here) for a same-commit signal ci.yml already gives.
+name: Dist
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dist:
+    uses: ./.github/workflows/build.yml
+    secrets:
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+      MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+    permissions:
+      contents: read
+      id-token: write

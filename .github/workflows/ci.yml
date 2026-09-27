@@ -72,13 +72,10 @@ jobs:
         if: runner.os != 'Linux'
         run: pnpm -C extension test
 
-  # The nine server builds and ten packages, on main only: they take longer
-  # than the tests, and the release workflow builds them again from its tag.
-  dist:
-    needs: [rust, extension]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/build.yml
-    secrets: inherit
-    permissions:
-      contents: read
-      id-token: write
+  # The nine server builds and ten packages run from dist.yml on pushes to
+  # main, not from here: nesting the `id-token: write` permission that
+  # macOS and Windows signing need inside a workflow that also triggers on
+  # `pull_request` lets GitHub's fork/Dependabot permission cap reject this
+  # whole workflow at load time, even on a run where the gated job would be
+  # skipped. Keeping this workflow's permissions minimal everywhere avoids
+  # that.
