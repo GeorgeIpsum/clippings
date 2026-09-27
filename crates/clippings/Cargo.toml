@@ -13,6 +13,11 @@ dunce.workspace = true
 serde_json.workspace = true
 tracing-subscriber.workspace = true
 
+# rust-analyzer's choice: the Windows system allocator is slow under the
+# many small allocations of a scan; elsewhere the system allocator is fine.
+[target.'cfg(windows)'.dependencies]
+mimalloc.workspace = true
+
 [dev-dependencies]
 insta.workspace = true
 lsp-server.workspace = true

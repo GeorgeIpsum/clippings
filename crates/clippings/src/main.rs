@@ -10,6 +10,11 @@ use tracing_subscriber::filter::LevelFilter;
 
 mod watch;
 
+/// mimalloc on Windows, the system allocator elsewhere (spec 8.2).
+#[cfg(windows)]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Writes `line` to `out`, terminated with a newline. Standard Unix
 /// behaviour for a pipe whose reader has gone away (`head`, a killed
 /// watcher client): stop quietly with exit code 0 instead of reporting a

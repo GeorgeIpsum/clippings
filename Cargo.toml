@@ -25,6 +25,7 @@ ignore = "0.4.33"
 insta = { version = "1.48", features = ["json"] }
 lsp-server = "0.10"
 memchr = "2.8"
+mimalloc = { version = "0.1.52", default-features = false }
 notify = "8.2"
 regex = "1.13"
 regex-syntax = "0.8.11"
@@ -41,3 +42,12 @@ lto = "fat"
 codegen-units = 1
 panic = "unwind"
 strip = "symbols"
+
+# The shipped binaries (spec 8.2): `release`, plus full debug info that
+# `scripts/dist/build.sh` moves out of the binary into a separate symbols
+# file (dSYM, PDB or `.debug`). The binary keeps its symbol table, so
+# backtraces name functions.
+[profile.dist]
+inherits = "release"
+debug = "full"
+strip = "none"
