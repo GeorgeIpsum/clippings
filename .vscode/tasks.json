@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "clippings: build server and extension",
+      "type": "shell",
+      "command": "pnpm dev && pnpm build",
+      "options": { "cwd": "${workspaceFolder}/extension" },
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/extension"],
+      "env": {
+        "CLIPPINGS_SERVER_PATH": "${workspaceFolder}/target/debug/clippings",
+        "RUST_BACKTRACE": "1"
+      },
+      "windows": {
+        "env": {
+          "CLIPPINGS_SERVER_PATH": "${workspaceFolder}\\target\\debug\\clippings.exe",
+          "RUST_BACKTRACE": "1"
+        }
+      },
+      "outFiles": ["${workspaceFolder}/extension/dist/**/*.js"],
+      "preLaunchTask": "clippings: build server and extension"
+    }
+  ]
+}
