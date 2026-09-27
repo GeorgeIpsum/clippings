@@ -17,6 +17,7 @@ import { ContextKeys } from './context/apply';
 import { contextValues } from './context/keys';
 import { SettingWriter } from './config/writes';
 import { DecorationManager } from './decorations/manager';
+import { registerExport } from './export/documents';
 import { IconFiles } from './icons/files';
 import { IconResolver } from './icons/resolver';
 import { invalidIcons } from './icons/svg';
@@ -104,6 +105,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     ...registerFilterCommands({ store, sync, cache, prompts }),
     ...registerSettingCommands(writer, prompts),
     ...registerGoToCommands(server),
+    ...registerExport(server),
     statusController,
     registerStatusBarCommand({ sync, writer, prompts, view: treeView }),
     ...registerScanCommands(server),
