@@ -19,7 +19,7 @@ A Rust language server does the scanning, indexing and tree building in its own 
 
 Settings live under `clippings.*` with Todo Tree's names and defaults below the prefix, so `todo-tree.general.tags` becomes `clippings.general.tags`. When Clippings finds Todo Tree settings it offers to import them; run **Clippings: Import Settings from Todo Tree** to import them at any time.
 
-Todo Tree's `ripgrep.*` settings have no equivalent, because Clippings does not use ripgrep, and `general.debug` is replaced by `clippings.server.logLevel`. Disable Todo Tree while you use Clippings, or both will highlight the same tags.
+Todo Tree's `ripgrep.*` settings have no equivalent, because Clippings does not run a ripgrep binary, and `general.debug` is replaced by `clippings.server.logLevel`. Disable Todo Tree while you use Clippings, or both will highlight the same tags.
 
 ## Settings
 

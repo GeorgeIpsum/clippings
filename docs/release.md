@@ -33,6 +33,14 @@ To bump it, edit all four in the same commit (the `channel` line and the three `
 
 **Node** is pinned to `22.23.3` through `actions/setup-node@v5`'s `node-version:` input, in five places: `ci.yml`'s `extension` job, `build.yml`'s `package` job, and `release.yml`'s `plan`, `marketplace` and `open-vsx` jobs. There is no `.nvmrc` and no `engines.node`; `extension/package.json`'s `engines` field only pins the VS Code API version (`^1.91.0`). To bump Node, edit all five `node-version:` lines to match.
 
+**Other pins**, each in one place:
+
+- `cargo-zigbuild==0.23.4` and `ziglang==0.15.2`, installed with pip in `.github/workflows/build.yml`'s `server` job;
+- the `debian:10` and `alpine:3.22` probe images, pinned by digest in `scripts/dist/check.sh`, with the tag and date they were taken from in a comment beside each;
+- `ovsx@1.2.0`, run with `npx` in `release.yml`'s `open-vsx` job (`@vscode/vsce` is a dev dependency, pinned by `extension/package.json` and `pnpm-lock.yaml`);
+- VS Code `1.91.0`, the `extension` job's matrix in `ci.yml`, which must equal the `engines.vscode` floor in `extension/package.json`;
+- actionlint `1.7.12`, in `ci.yml`'s `lint` job (both the download script's tag and its version argument). shellcheck is whatever the `ubuntu-latest` image ships.
+
 ## Cutting a release
 
 1. Bump the version in `extension/package.json` and `Cargo.toml`'s `[workspace.package]` `version`, run `cargo check` so `Cargo.lock` follows, and commit on `main`.
@@ -239,7 +247,7 @@ The job runs when `WINDOWS_SIGNING_ENDPOINT` is set. Signatures are timestamped 
 - **Windows** builds natively; MSVC writes the PDB beside the binary, which carries no debug info.
 - **Linux and Alpine** build with `cargo zigbuild`. Linux (glibc) targets use `<triple>.2.28` — zigbuild's glibc-suffixed target — for the 2.28 floor; Alpine (musl) targets have no glibc floor to pin, so `scripts/dist/target.sh` leaves `glibc` empty for them and `build.sh` builds the plain musl triple with no suffix. `llvm-objcopy` from the rustup `llvm-tools` component then splits the debug info into the `.debug` file and strips it from the binary (`--strip-debug`) for both. `CLIPPINGS_BUILD_TOOL=cargo` builds with plain cargo instead, for the `debian:10` container fallback the spec allows; zigbuild builds all five Linux and Alpine targets today, so CI does not use it.
 
-macOS, Linux and Alpine binaries keep their symbol table, so a panic backtrace in the Clippings output channel (the client sets `RUST_BACKTRACE=1`) names its functions; file and line numbers need the symbols file. This makes those binaries about 15 to 30 % larger. Windows binaries cannot do this: MSVC executables carry no symbol table, and names come only from the PDB, which stays a release asset, so Windows backtraces show `<unknown>` frames unless the PDB is placed beside `clippings.exe`.
+macOS, Linux and Alpine binaries keep their symbol table, so a panic backtrace in the Clippings output channel (the client sets `RUST_BACKTRACE=1`) names its functions; file and line numbers need the symbols file. This makes those binaries larger: 14 % for `darwin-arm64` measured locally, and 15 to 27 % across targets in the prototype builds. Windows binaries cannot do this: MSVC executables carry no symbol table, and names come only from the PDB, which stays a release asset, so Windows backtraces show `<unknown>` frames unless the PDB is placed beside `clippings.exe`.
 
 The server uses mimalloc on Windows and the system allocator elsewhere.
 

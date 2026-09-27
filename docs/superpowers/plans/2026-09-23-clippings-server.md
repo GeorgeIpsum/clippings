@@ -1,4 +1,4 @@
-# Clippings Server Implementation Plan (Plan 2 of 4)
+# Clippings Server Implementation Plan (Plan 2 of 6)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
