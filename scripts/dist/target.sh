@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# The variables set here are read by the scripts that source this file.
+# shellcheck disable=SC2034
 # Sourced by the other scripts in this directory. Maps a VS Code target
 # (spec 8.1) to its Rust triple and build facts:
 #
