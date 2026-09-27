@@ -82,10 +82,6 @@ interface Session {
   watchdog?: NodeJS.Timeout;
 }
 
-export function dbgLog(line: string): void {
-  console.log(`${new Date().toISOString()} ${line}`);
-}
-
 export class ServerConnection implements vscode.Disposable {
   /** The current session: the only one that spawns servers and relays their messages. */
   private session: Session | undefined;
@@ -430,36 +426,14 @@ export class ServerConnection implements vscode.Disposable {
     if (this.running && this.client) this.notified(this.client.sendNotification(m.StopScan, {}));
   }
 
-  private dbgSeq = 0;
-  readonly dbgPending = new Map<number, { what: string; at: number; state: string; pid: number | undefined }>();
-  private dbgTimer = setInterval(() => {
-    for (const [id, p] of this.dbgPending) {
-      if (Date.now() - p.at > 3000) dbgLog(`DBG pending #${id} ${p.what} for ${Date.now() - p.at} ms, sent in state ${p.state} pid ${p.pid}; now state ${this.client?.state} pid ${this.pid}`);
-    }
-  }, 3000);
-  private async dbg<T>(what: string, work: () => Promise<T>): Promise<T> {
-    const id = ++this.dbgSeq;
-    this.dbgPending.set(id, { what, at: Date.now(), state: String(this.client?.state), pid: this.pid });
-    try {
-      return await work();
-    } catch (err) {
-      dbgLog(`DBG #${id} ${what} failed: ${String(err)}`);
-      throw err;
-    } finally {
-      this.dbgPending.delete(id);
-    }
-  }
-
   async children(parent: string | null): Promise<ViewNode[]> {
     if (!this.running || !this.client) return [];
-    const client = this.client;
-    return this.dbg(`children ${parent}`, async () => (await client.sendRequest(m.Children, { parent })).nodes);
+    return (await this.client.sendRequest(m.Children, { parent })).nodes;
   }
 
   async find(uri: string, line: number | null): Promise<ViewNode[][]> {
     if (!this.running || !this.client) return [];
-    const client = this.client;
-    return this.dbg(`find ${uri}`, async () => (await client.sendRequest(m.Find, { uri, line })).paths);
+    return (await this.client.sendRequest(m.Find, { uri, line })).paths;
   }
 
   async navigate(uri: string, positions: Position[], direction: Direction): Promise<Range[] | null> {
@@ -474,7 +448,6 @@ export class ServerConnection implements vscode.Disposable {
 
   dispose(): void {
     this.disposed = true;
-    clearInterval(this.dbgTimer);
     this.trust.dispose();
     void this.stop();
     for (const e of Object.values(this.emitters)) e.dispose();

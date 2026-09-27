@@ -23,7 +23,7 @@ import { IconResolver } from './icons/resolver';
 import { invalidIcons } from './icons/svg';
 import { TodoTreeImporter } from './importer/run';
 import type { StatusParams } from './protocol';
-import { ServerConnection, dbgLog } from './server/connection';
+import { ServerConnection } from './server/connection';
 import { ViewStateStore } from './state/viewState';
 import { StatusController } from './status/controller';
 import { OnceNotice } from './status/presentation';
@@ -133,7 +133,6 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
       if (p.refresh.includes(null)) expansion.onRootRefresh();
       provider.refresh(p.refresh);
     }),
-    treeView.onDidChangeVisibility((e) => dbgLog(`DBG view visible ${e.visible}`)),
     treeView.onDidExpandElement((e) => expansion.set(e.element, true)),
     treeView.onDidCollapseElement((e) => expansion.set(e.element, false)),
     vscode.workspace.onDidChangeConfiguration((e) => {

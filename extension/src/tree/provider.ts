@@ -6,9 +6,6 @@ import type { ViewNode } from '../protocol';
 import { treeItem, type ItemContext } from './items';
 import type { NodeCache } from './nodeCache';
 import { TreePerf } from './perf';
-import { dbgLog } from '../server/connection';
-
-let dbgSeq = 0;
 
 export interface ChildrenSource {
   children(parent: string | null): Promise<ViewNode[]>;
@@ -27,16 +24,7 @@ export class TreeProvider implements vscode.TreeDataProvider<string>, vscode.Dis
 
   async getChildren(element?: string): Promise<string[]> {
     const parent = element ?? null;
-    const seq = ++dbgSeq;
-    const t0 = Date.now();
-    let nodes: ViewNode[];
-    try {
-      nodes = await this.source.children(parent);
-    } catch (err) {
-      dbgLog(`DBG getChildren #${seq} failed ${String(err)}`);
-      throw err;
-    }
-    if (Date.now() - t0 > 500) dbgLog(`DBG getChildren #${seq} slow ${Date.now() - t0} ms ${nodes.length}`);
+    const nodes = await this.source.children(parent);
     return this.perf.time(() => {
       this.cache.record(parent, nodes);
       const ids = nodes.map((n) => n.id);
@@ -63,7 +51,6 @@ export class TreeProvider implements vscode.TreeDataProvider<string>, vscode.Dis
 
   /** Applies `clippings/treeChanged`: `null` is the root; unknown IDs are ignored. */
   refresh(parents: readonly (string | null)[]): void {
-    dbgLog(`DBG treeChanged ${parents.map((p) => String(p).slice(-40)).join(',')}`);
     this.perf.lastChangeAt = performance.now();
     this.perf.time(() => {
       if (parents.includes(null)) return this.changed.fire(undefined);
@@ -79,7 +66,6 @@ export class TreeProvider implements vscode.TreeDataProvider<string>, vscode.Dis
 
   /** A new server instance: forget every node and refetch. */
   reset(): void {
-    dbgLog('DBG provider reset');
     this.cache.clear();
     this.changed.fire(undefined);
   }
