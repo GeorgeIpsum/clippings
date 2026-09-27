@@ -1304,7 +1304,7 @@
     "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
     "test:integration": "vscode-test",
     "test": "pnpm dev && pnpm typecheck && pnpm build && pnpm test:unit && pnpm test:scripts && pnpm test:integration",
-    "package": "vsce package --no-dependencies"
+    "package": "node scripts/package.mjs"
   },
   "packageManager": "pnpm@10.27.0",
   "dependencies": {

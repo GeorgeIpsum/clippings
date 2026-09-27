@@ -26,6 +26,8 @@ const common = {
   logLevel: 'info',
 };
 
+// A stale source map from a development build must not reach a package.
+rmSync('dist', { recursive: true, force: true });
 rmSync('out', { recursive: true, force: true });
 const contexts = [
   await esbuild.context({ ...common, entryPoints: ['src/extension.ts'], outfile: 'dist/extension.js' }),
