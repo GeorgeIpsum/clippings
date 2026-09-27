@@ -46,6 +46,30 @@ describe('reveal, track file and todo clicks', () => {
     ]);
   });
 
+  it('never leaves an unhandled rejection when the track-file reveal fails', async () => {
+    const view = api.test.tree.view;
+    const originalReveal = view.reveal.bind(view);
+    let notifyCalled: (() => void) | undefined;
+    const called = new Promise<void>((resolve) => (notifyCalled = resolve));
+    view.reveal = (() => {
+      notifyCalled?.();
+      return Promise.reject(new Error('injected reveal failure'));
+    }) as typeof originalReveal;
+    const rejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      await open(workspacePath('lib', 'notes.rs'));
+      await called;
+      // Node flags an unhandled rejection on a later tick; give it room to do so.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.deepEqual(rejections, [], 'a failed track-file reveal must not become an unhandled rejection');
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+      view.reveal = originalReveal;
+    }
+  });
+
   it('reveals the current file on demand when tracking is off', async () => {
     await setSetting('tree.trackFile', false);
     try {

@@ -320,6 +320,59 @@ describe('server lifecycle', () => {
     }
   });
 
+  it('clears the start watchdog when a pending start is retired', async function () {
+    if (process.platform === 'win32') this.skip();
+    this.timeout(20_000);
+    // Never responds to `initialize`, so the session stays in the `Starting`
+    // state: disposing it then never goes through a state change, which is
+    // the case that leaves the watchdog timer dangling without the fix.
+    const dir = mkdtempSync(join(tmpdir(), 'clippings-fake-'));
+    const fake = fakeServer(dir, ['exec cat 3>&1 > /dev/null']);
+    const real = process.env['CLIPPINGS_SERVER_PATH'];
+    const host = testHost();
+    const connection = new ServerConnection(host);
+    const realSetTimeout = global.setTimeout;
+    const realClearTimeout = global.clearTimeout;
+    // A distinctive delay so only the watchdog's own `setTimeout` call matches.
+    const WATCHDOG_MS = 424_242;
+    let watchdogHandle: NodeJS.Timeout | undefined;
+    let watchdogCleared = false;
+    global.setTimeout = ((handler: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      const handle = realSetTimeout(handler, ms, ...args);
+      if (ms === WATCHDOG_MS) watchdogHandle = handle;
+      return handle;
+    }) as typeof setTimeout;
+    global.clearTimeout = ((handle?: NodeJS.Timeout | string | number) => {
+      if (handle !== undefined && handle === watchdogHandle) watchdogCleared = true;
+      return realClearTimeout(handle as NodeJS.Timeout);
+    }) as typeof clearTimeout;
+    const delay = (ms: number) => new Promise<void>((resolve) => realSetTimeout(resolve, ms));
+    try {
+      process.env['CLIPPINGS_SERVER_PATH'] = fake;
+      connection.startTimeoutMs = WATCHDOG_MS;
+      const started = connection.start();
+      started.catch(() => undefined);
+      const deadline = Date.now() + 5000;
+      while (watchdogHandle === undefined) {
+        assert.ok(Date.now() < deadline, 'the watchdog timer was never scheduled');
+        await delay(10);
+      }
+      // `retire` clears the watchdog synchronously, from `stop`'s own call to
+      // `cancel`, before anything async (killing the process, which closes
+      // the client's connection and would otherwise clear it too, later and
+      // for an unrelated reason) has had a chance to run.
+      const stopping = connection.stop();
+      assert.equal(watchdogCleared, true, 'retire must clear the pending watchdog timer synchronously');
+      await withTimeout('the stop', stopping);
+    } finally {
+      global.setTimeout = realSetTimeout;
+      global.clearTimeout = realClearTimeout;
+      setServerPath(real);
+      connection.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('starts on the defaults with a warning when a setting has the wrong type', async () => {
     const s = api.test.server;
     const instance = s.status()?.instance;

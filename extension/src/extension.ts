@@ -79,6 +79,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     cache,
     view: treeView,
     settings: () => sync.current,
+    log,
   });
   const flash = new LineFlash();
   const writer = new SettingWriter(prompts);
@@ -103,7 +104,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
     ...registerExpandCommands({ store, sync, expansion, provider }),
     ...registerNavigationCommands(revealer, flash),
     ...registerViewCommands({ store, sync, expansion, provider, prompts }),
-    ...registerFilterCommands({ store, sync, cache, prompts }),
+    ...registerFilterCommands({ store, sync, cache, prompts, writer }),
     ...registerSettingCommands(writer, prompts),
     ...registerGoToCommands(server),
     ...registerExport(server),

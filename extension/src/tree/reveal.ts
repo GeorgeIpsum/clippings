@@ -10,6 +10,7 @@ export interface RevealDeps {
   cache: NodeCache;
   view: vscode.TreeView<string>;
   settings(): Settings;
+  log: vscode.LogOutputChannel;
 }
 
 export const TRACK_DELAY_MS = 500;
@@ -44,7 +45,7 @@ export class Revealer implements vscode.Disposable {
     this.timer = setTimeout(() => {
       const { tree, general } = this.deps.settings();
       if (tree.autoRefresh && tree.trackFile && schemeList(general.schemes).includes(uri.scheme) && this.deps.view.visible) {
-        void this.reveal(uri, false);
+        this.reveal(uri, false).catch((err: unknown) => this.deps.log.debug(`Track file reveal failed: ${String(err)}`));
       }
     }, TRACK_DELAY_MS);
   }

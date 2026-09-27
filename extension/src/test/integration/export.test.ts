@@ -1,6 +1,7 @@
 import * as assert from 'node:assert/strict';
 import { homedir } from 'node:os';
 import * as vscode from 'vscode';
+import { ExportDocuments, exportUri } from '../../export/documents';
 import type { ClippingsApi } from '../../testApi';
 import { DEFAULT_TREE } from './fixture';
 import { getApi, setSetting, treeBecomes, whenIdle } from './helpers';
@@ -35,6 +36,21 @@ describe('export', () => {
     assert.match(text, /^└─ workspace\n/);
     assert.ok(text.includes('line 2: TODO (alice) wire up the router'), text);
     assert.ok(!text.includes('Scan mode'), 'status nodes are not exported');
+  });
+
+  it('releases a closed export document\'s stored content, keeping others', () => {
+    const documents = new ExportDocuments();
+    const closedUri = exportUri('/tmp/todo-tree-closed.txt');
+    const otherUri = exportUri('/tmp/todo-tree-still-open.txt');
+    documents.set(closedUri, 'closed content');
+    documents.set(otherUri, 'still open content');
+    documents.release(closedUri);
+    assert.equal(documents.provideTextDocumentContent(closedUri), '', 'the closed document’s content is dropped');
+    assert.equal(
+      documents.provideTextDocumentContent(otherUri),
+      'still open content',
+      'an unrelated document keeps its content',
+    );
   });
 
   it('exports JSON when the path ends in .json', async () => {

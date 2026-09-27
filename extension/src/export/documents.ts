@@ -27,6 +27,11 @@ export class ExportDocuments implements vscode.TextDocumentContentProvider, vsco
     this.changed.fire(uri);
   }
 
+  /** Drops a closed document's stored content; a reopen shows an empty document. */
+  release(uri: vscode.Uri): void {
+    this.contents.delete(uri.toString());
+  }
+
   dispose(): void {
     this.changed.dispose();
   }
@@ -37,6 +42,9 @@ export function registerExport(server: ServerConnection): vscode.Disposable[] {
   return [
     documents,
     vscode.workspace.registerTextDocumentContentProvider(EXPORT_SCHEME, documents),
+    vscode.workspace.onDidCloseTextDocument((document) => {
+      if (document.uri.scheme === EXPORT_SCHEME) documents.release(document.uri);
+    }),
     vscode.commands.registerCommand('clippings.exportTree', async () => {
       const result = await server.export();
       if (!result) return;

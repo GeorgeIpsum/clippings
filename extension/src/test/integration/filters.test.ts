@@ -151,6 +151,21 @@ describe('filters', () => {
     }
   });
 
+  it('resets filtering.scopes globally through the setting writer when Open Settings is chosen', async () => {
+    assert.equal(vscode.workspace.getConfiguration('clippings.filtering').inspect('scopes')?.globalValue, undefined);
+    try {
+      api.test.prompts.script('Open Settings');
+      await vscode.commands.executeCommand('clippings.switchScope');
+      assert.deepEqual(
+        vscode.workspace.getConfiguration('clippings.filtering').inspect('scopes')?.globalValue,
+        [],
+      );
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await setSetting('filtering.scopes', undefined);
+    }
+  });
+
   it('resets all filters, including the text filter', async () => {
     api.test.prompts.script('guide');
     await vscode.commands.executeCommand('clippings.filter');

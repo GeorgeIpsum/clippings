@@ -25,6 +25,7 @@ import {
   type TreeChangedParams,
   type ViewNode,
 } from '../protocol';
+import { serverPathSetting } from './candidates';
 import { CrashHistory, GIVE_UP_MESSAGE } from './crashHistory';
 import { CrashPolicy } from './crashPolicy';
 import { locateServer } from './locate';
@@ -77,6 +78,8 @@ interface Session {
   abandoned: boolean;
   /** Settles once the client is disposed and its server process is gone. */
   retired?: Promise<void>;
+  /** The pending "did not finish starting" timer for this session's current start, if any. */
+  watchdog?: NodeJS.Timeout;
 }
 
 export class ServerConnection implements vscode.Disposable {
@@ -127,7 +130,8 @@ export class ServerConnection implements vscode.Disposable {
   constructor(private readonly host: ConnectionHost) {
     // A workspace `server.path` counts only once the workspace is trusted.
     this.trust = vscode.workspace.onDidGrantWorkspaceTrust(() => {
-      if (vscode.workspace.getConfiguration('clippings').inspect('server.path')?.workspaceValue) void this.restart();
+      const inspected = vscode.workspace.getConfiguration('clippings').inspect<string>('server.path');
+      if (serverPathSetting(inspected, true)?.fromWorkspace) void this.restart();
     });
   }
 
@@ -254,10 +258,9 @@ export class ServerConnection implements vscode.Disposable {
     let waiting: ((outcome: 'failed') => void) | undefined;
     const failed = new Promise<'failed'>((resolve) => (waiting = resolve));
     // Each start, first or after a crash, must reach the running state in time.
-    let watchdog: NodeJS.Timeout | undefined;
     let settled = false;
     const startFailed = (reason: string) => {
-      clearTimeout(watchdog);
+      clearTimeout(session.watchdog);
       if (settled || session.abandoned) return;
       settled = true;
       log.error(reason);
@@ -296,7 +299,7 @@ export class ServerConnection implements vscode.Disposable {
     client.onNotification(m.Styles, relay(this.emitters.styles));
     client.onNotification(m.Decorations, relay(this.emitters.decorations));
     client.onDidChangeState((e) => {
-      clearTimeout(watchdog);
+      clearTimeout(session.watchdog);
       // While starting, `start()` returns the client's own start promise. A
       // connection that closes during `initialize` makes the client drop that
       // promise and then reject it; handling it here keeps that quiet.
@@ -305,7 +308,7 @@ export class ServerConnection implements vscode.Disposable {
       if (e.newState === State.Starting) {
         settled = false;
         const seconds = this.startTimeoutMs / 1000;
-        watchdog = setTimeout(
+        session.watchdog = setTimeout(
           () => startFailed(`The server did not finish starting within ${seconds} s.`),
           this.startTimeoutMs,
         );
@@ -326,7 +329,7 @@ export class ServerConnection implements vscode.Disposable {
     } catch (err) {
       // `initialize` failed or the connection closed under it: a start failure.
       settled = true;
-      clearTimeout(watchdog);
+      clearTimeout(session.watchdog);
       log.error(`The server failed to start: ${String(err)}`);
       await this.retire(session);
       return 'failed';
@@ -358,6 +361,7 @@ export class ServerConnection implements vscode.Disposable {
   private retire(session: Session): Promise<void> {
     if (session.retired) return session.retired;
     session.abandoned = true;
+    clearTimeout(session.watchdog);
     session.policy.abandon();
     if (this.session === session) this.session = undefined;
     const retired = (async () => {

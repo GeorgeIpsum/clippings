@@ -3,6 +3,7 @@
 
 import * as vscode from 'vscode';
 import type { ConfigurationSync } from '../config/sync';
+import type { SettingWriter } from '../config/writes';
 import {
   fileGlob,
   folderGlob,
@@ -20,10 +21,11 @@ export interface FilterDeps {
   sync: ConfigurationSync;
   cache: NodeCache;
   prompts: Prompts;
+  writer: SettingWriter;
 }
 
 export function registerFilterCommands(deps: FilterDeps): vscode.Disposable[] {
-  const { store, sync, cache, prompts } = deps;
+  const { store, sync, cache, prompts, writer } = deps;
   const pathOf = (element: unknown) => (typeof element === 'string' ? nodePath(cache.ownKey(element)) : undefined);
   const setGlobs = async (include: string[], exclude: string[]) => {
     await store.setGlobs(include, exclude);
@@ -57,9 +59,7 @@ export function registerFilterCommands(deps: FilterDeps): vscode.Disposable[] {
           'OK',
         );
         if (choice === 'Open Settings') {
-          await vscode.workspace
-            .getConfiguration('clippings.filtering')
-            .update('scopes', [], vscode.ConfigurationTarget.Global);
+          await writer.write('filtering.scopes', [], 'global');
           await vscode.commands.executeCommand('workbench.action.openSettingsJson', 'clippings.filtering.scopes');
         }
         return;
