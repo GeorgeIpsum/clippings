@@ -80,6 +80,8 @@ interface Session {
   retired?: Promise<void>;
   /** The pending "did not finish starting" timer for this session's current start, if any. */
   watchdog?: NodeJS.Timeout;
+  /** Aborted on retirement: settles this session's requests still waiting for an answer. */
+  readonly retiring: AbortController;
 }
 
 export class ServerConnection implements vscode.Disposable {
@@ -281,7 +283,7 @@ export class ServerConnection implements vscode.Disposable {
       errorHandler: policy,
     };
     const client = new Client('clippings', 'Clippings', serverOptions, clientOptions);
-    const session: Session = { client, policy, child: undefined, abandoned: false };
+    const session: Session = { client, policy, child: undefined, abandoned: false, retiring: new AbortController() };
     const relay =
       <P>(emitter: vscode.EventEmitter<P>) =>
       (params: P) => {
@@ -361,6 +363,7 @@ export class ServerConnection implements vscode.Disposable {
   private retire(session: Session): Promise<void> {
     if (session.retired) return session.retired;
     session.abandoned = true;
+    session.retiring.abort();
     clearTimeout(session.watchdog);
     session.policy.abandon();
     if (this.session === session) this.session = undefined;
@@ -427,23 +430,24 @@ export class ServerConnection implements vscode.Disposable {
   }
 
   async children(parent: string | null): Promise<ViewNode[]> {
-    if (!this.running || !this.client) return [];
-    return (await this.client.sendRequest(m.Children, { parent })).nodes;
+    if (!this.running || !this.session) return [];
+    return (await untilRetired(this.session, this.session.client.sendRequest(m.Children, { parent }))).nodes;
   }
 
   async find(uri: string, line: number | null): Promise<ViewNode[][]> {
-    if (!this.running || !this.client) return [];
-    return (await this.client.sendRequest(m.Find, { uri, line })).paths;
+    if (!this.running || !this.session) return [];
+    return (await untilRetired(this.session, this.session.client.sendRequest(m.Find, { uri, line }))).paths;
   }
 
   async navigate(uri: string, positions: Position[], direction: Direction): Promise<Range[] | null> {
-    if (!this.running || !this.client) return null;
-    return (await this.client.sendRequest(m.Navigate, { uri, positions, direction })).ranges;
+    if (!this.running || !this.session) return null;
+    const sending = this.session.client.sendRequest(m.Navigate, { uri, positions, direction });
+    return (await untilRetired(this.session, sending)).ranges;
   }
 
   async export(): Promise<ExportResult | undefined> {
-    if (!this.running || !this.client) return undefined;
-    return this.client.sendRequest(m.Export, {});
+    if (!this.running || !this.session) return undefined;
+    return untilRetired(this.session, this.session.client.sendRequest(m.Export, {}));
   }
 
   dispose(): void {
@@ -452,6 +456,26 @@ export class ServerConnection implements vscode.Disposable {
     void this.stop();
     for (const e of Object.values(this.emitters)) e.dispose();
   }
+}
+
+/**
+ * Settles like `sending`, a request through the session's client, or rejects
+ * once the session is retired. The client rejects its pending requests only
+ * when it disposes its connection, which it skips when the server does not
+ * answer `shutdown` in time; such a request would otherwise never settle,
+ * and VS Code's tree view waits on a pending `getChildren` for good.
+ */
+function untilRetired<R>(session: Session, sending: Promise<R>): Promise<R> {
+  const signal = session.retiring.signal;
+  if (signal.aborted) {
+    sending.catch(() => undefined);
+    return Promise.reject(new Error('The server connection was stopped.'));
+  }
+  return new Promise((resolve, reject) => {
+    const stopped = () => reject(new Error('The server connection was stopped.'));
+    signal.addEventListener('abort', stopped, { once: true });
+    sending.then(resolve, reject).finally(() => signal.removeEventListener('abort', stopped));
+  });
 }
 
 /** Settles like `work`, or with `'cancelled'` as soon as `signal` aborts. */

@@ -10,10 +10,7 @@ These are the known issues left after plan 4's per-task reviews and its whole-br
 
 ## Tests
 
-- **Notebook test cleanup.** `notebook.test.ts`'s `after` hook deletes `notes.ipynb` while the notebook document may still be open, then waits on a tree state that is already true. It failed 2 of 3 runs locally and none in CI. The server code makes the race harmless: a late close rescans the missing file and removes it. If it recurs:
-  1. Capture the failing assertion first.
-  2. Before `rmSync`, await `onDidCloseNotebookDocument` for the notebook's URI.
-  3. End the hook with `whenIdle(api)`.
+- **Notebook test cleanup.** The `ENOENT … copyfile …notes.ipynb` line in a failing macOS run is VS Code's local history logging a copy of the deleted notebook; the notebook test passed in that run. The run failed because a `clippings/children` request to a retired server never settled and VS Code's tree view waited on it for good, which is now fixed. The `after` hook could still wait for `onDidCloseNotebookDocument` before `rmSync` and end with `whenIdle(api)`, but no failure has been traced to it.
 - `.vscode-test.pathforms.mjs` builds every path form's scratch profile when the config loads, even when a `--label` selects one form.
 
 ## Workflows and scripts

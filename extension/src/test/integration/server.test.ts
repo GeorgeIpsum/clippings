@@ -373,6 +373,40 @@ describe('server lifecycle', () => {
     }
   });
 
+  it('settles a pending request when a server that ignores shutdown is stopped', async function () {
+    if (process.platform === 'win32') this.skip();
+    this.timeout(20_000);
+    // Answers `initialize` only, so the request stays pending and the stop
+    // times out. The language client then never disposes its connection,
+    // which is what rejects pending requests; a request left pending kept
+    // VS Code's tree view waiting on it for good.
+    const dir = mkdtempSync(join(tmpdir(), 'clippings-fake-'));
+    const received = join(dir, 'received');
+    const script = join(dir, 'server.js');
+    writeFileSync(script, SLOW_TO_STOP_SERVER);
+    const fake = fakeServer(dir, [`ELECTRON_RUN_AS_NODE=1 exec '${process.execPath}' '${script}' '${received}'`]);
+    const real = process.env['CLIPPINGS_SERVER_PATH'];
+    const connection = new ServerConnection(testHost());
+    try {
+      process.env['CLIPPINGS_SERVER_PATH'] = fake;
+      await withTimeout('the start', connection.start());
+      assert.equal(connection.running, true);
+      const children = connection.children(null).then(
+        () => 'resolved',
+        () => 'rejected',
+      );
+      await waitFor('the request at the server', () => receivedMethods(received).includes('clippings/children'), [
+        onFilesChanged(dir),
+      ]);
+      await withTimeout('the stop', connection.stop());
+      assert.equal(await withTimeout('the pending request', children, 5000), 'rejected');
+    } finally {
+      setServerPath(real);
+      connection.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('starts on the defaults with a warning when a setting has the wrong type', async () => {
     const s = api.test.server;
     const instance = s.status()?.instance;
@@ -406,8 +440,12 @@ describe('server lifecycle', () => {
   });
 });
 
-/** A server that answers `initialize` and ignores everything else, `shutdown` included. */
+/**
+ * A server that answers `initialize` and ignores everything else, `shutdown`
+ * included. Given a file path, it appends each method it receives there.
+ */
 const SLOW_TO_STOP_SERVER = `
+const received = process.argv[2];
 let buffer = Buffer.alloc(0);
 process.stdin.on('data', (chunk) => {
   buffer = Buffer.concat([buffer, chunk]);
@@ -418,6 +456,7 @@ process.stdin.on('data', (chunk) => {
     if (buffer.length < end + 4 + length) return;
     const message = JSON.parse(buffer.subarray(end + 4, end + 4 + length).toString());
     buffer = buffer.subarray(end + 4 + length);
+    if (received) require('fs').appendFileSync(received, message.method + '\\n');
     if (message.method === 'initialize') {
       const body = JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { capabilities: {} } });
       process.stdout.write('Content-Length: ' + Buffer.byteLength(body) + '\\r\\n\\r\\n' + body);
@@ -455,6 +494,15 @@ function setServerPath(path: string | undefined): void {
 function startedPids(file: string): number[] {
   try {
     return readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(Number);
+  } catch {
+    return [];
+  }
+}
+
+/** The methods a fake server recorded, in arrival order. */
+function receivedMethods(file: string): string[] {
+  try {
+    return readFileSync(file, 'utf8').split('\n').filter(Boolean);
   } catch {
     return [];
   }
