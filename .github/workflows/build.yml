@@ -1,0 +1,109 @@
+# Builds the server for the nine VS Code targets and the ten VSIX packages
+# (spec 8.1, 8.2). Called by the release workflow and by CI on main.
+#
+# Artifacts:
+#   server-<target>    the stripped server binary
+#   symbols-<target>   its debug symbols (dSYM zip, PDB or .debug file)
+#   vsix               the nine platform packages and the universal package
+name: Build
+
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: The extension version, from package.json.
+        value: ${{ jobs.package.outputs.version }}
+      pre-release:
+        description: "'true' when the version is a pre-release (odd minor)."
+        value: ${{ jobs.package.outputs.pre-release }}
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: server (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: win32-x64, triple: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: win32-arm64, triple: aarch64-pc-windows-msvc, os: windows-latest }
+          - { target: darwin-x64, triple: x86_64-apple-darwin, os: macos-latest }
+          - { target: darwin-arm64, triple: aarch64-apple-darwin, os: macos-latest }
+          - { target: linux-x64, triple: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: linux-arm64, triple: aarch64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: linux-armhf, triple: armv7-unknown-linux-gnueabihf, os: ubuntu-latest }
+          - { target: alpine-x64, triple: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: alpine-arm64, triple: aarch64-unknown-linux-musl, os: ubuntu-latest }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+          components: ${{ runner.os == 'Linux' && 'llvm-tools' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install cargo-zigbuild
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install cargo-zigbuild==0.23.4 ziglang==0.15.2
+          echo "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: scripts/dist/build.sh ${{ matrix.target }} dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.target }}
+          path: dist/${{ matrix.target }}/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: symbols-${{ matrix.target }}
+          path: dist/symbols/
+          if-no-files-found: error
+
+  package:
+    needs: server
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      pre-release: ${{ steps.version.outputs.pre-release }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: extension/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - run: pnpm -C extension install --frozen-lockfile
+      - id: version
+        run: node extension/scripts/version.mjs
+      # One bundle serves all ten packages.
+      - run: pnpm -C extension build --production
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: server-*
+          path: dist/server
+      - name: Package
+        run: |
+          for target in win32-x64 win32-arm64 linux-x64 linux-arm64 linux-armhf alpine-x64 alpine-arm64 darwin-x64 darwin-arm64; do
+            exe=clippings
+            [[ $target == win32-* ]] && exe=clippings.exe
+            node extension/scripts/package.mjs --target "$target" --server "dist/server/server-$target/$exe" --out dist/vsix
+          done
+          node extension/scripts/package.mjs --universal --out dist/vsix
+          ls -l dist/vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: dist/vsix/*.vsix
+          if-no-files-found: error

@@ -71,3 +71,9 @@ jobs:
       - name: pnpm -C extension test
         if: runner.os != 'Linux'
         run: pnpm -C extension test
+
+  # The nine server builds and ten packages, on main only: they take longer
+  # than the tests, and the release workflow builds them again from its tag.
+  dist:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/build.yml
