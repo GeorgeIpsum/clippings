@@ -1301,8 +1301,9 @@
     "typecheck": "tsc --noEmit -p .",
     "dev": "cargo build --manifest-path ../Cargo.toml -p clippings",
     "test:unit": "mocha --ui bdd \"out/test/unit/**/*.test.js\"",
+    "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
     "test:integration": "vscode-test",
-    "test": "pnpm dev && pnpm typecheck && pnpm build && pnpm test:unit && pnpm test:integration",
+    "test": "pnpm dev && pnpm typecheck && pnpm build && pnpm test:unit && pnpm test:scripts && pnpm test:integration",
     "package": "vsce package --no-dependencies"
   },
   "packageManager": "pnpm@10.27.0",
