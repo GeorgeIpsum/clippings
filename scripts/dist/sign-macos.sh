@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Signs a macOS server binary with a Developer ID Application certificate
 # and notarizes it (docs/release.md, "Signing"). Optional: the build
-# workflow runs this only when the certificate secret is configured.
+# workflow's `sign-macos` job runs this only when the MACOS_SIGNING_IDENTITY
+# variable is set. The intended setup keeps these secrets on the `signing`
+# environment, scoped to that job; a caller forwarding its own repository
+# secrets by name (as dist.yml and release.yml do) is the fallback.
 #
 # A bare binary cannot carry a stapled ticket, so notarization only records
 # it with Apple; Gatekeeper looks the ticket up online. notarytool takes a
@@ -35,7 +38,10 @@ security set-keychain-settings -lut 21600 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
 security import "$work/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
 security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
-mapfile -t existing_keychains < <(security list-keychains -d user | tr -d '"')
+# `security list-keychains` indents each line with 4 spaces; word-split on
+# whitespace (not `mapfile`, which keeps the indentation and needs bash 4 —
+# macOS's own /usr/bin/env bash is 3.2) to get clean paths.
+read -ra existing_keychains < <(security list-keychains -d user | tr -d '"' | tr '\n' ' ')
 security list-keychains -d user -s "$keychain" "${existing_keychains[@]}"
 
 # The hardened runtime and a secure timestamp are required for notarization.

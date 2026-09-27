@@ -12,8 +12,10 @@
 # signed with Azure Artifact Signing in `sign-windows` when the
 # WINDOWS_SIGNING_ENDPOINT variable exists. Both run in the `signing`
 # environment so their credentials never reach the ordinary `server` matrix
-# job or its third-party actions. Callers pass the macOS signing secrets
-# explicitly (below) and grant `id-token: write`.
+# job or its third-party actions. The intended setup keeps the macOS
+# certificate and notary secrets on the `signing` environment itself;
+# callers forwarding them by name explicitly (below), as dist.yml and
+# release.yml do, is the fallback. Callers must grant `id-token: write`.
 name: Build
 
 on:
@@ -95,12 +97,14 @@ jobs:
           path: dist/symbols/
           if-no-files-found: error
 
-  # Runs only when macOS signing is configured, in the `signing` environment
-  # that holds the certificate and notary secrets. A job of its own, not a
-  # step in `server`: a job-level `if` can read a plain repository variable
-  # like MACOS_SIGNING_IDENTITY but not a secret gated behind an
-  # environment, and the certificate should never be in scope for the
-  # ordinary `server` matrix job's third-party actions (rust-cache,
+  # Runs only when macOS signing is configured, in the `signing` environment.
+  # The intended setup keeps the certificate and notary secrets on that
+  # environment directly; a caller forwarding its own repository secrets by
+  # name (see `on.workflow_call.secrets` above) is the fallback. A job of
+  # its own, not a step in `server`: a job-level `if` can read a plain
+  # repository variable like MACOS_SIGNING_IDENTITY but not a secret gated
+  # behind an environment, and the certificate should never be in scope for
+  # the ordinary `server` matrix job's third-party actions (rust-cache,
   # setup-qemu, rust-toolchain).
   sign-macos:
     needs: server
@@ -109,7 +113,9 @@ jobs:
     permissions:
       contents: read
     runs-on: macos-latest
-    timeout-minutes: 40
+    # Two sequential 30-minute notary waits (sign-macos.sh's
+    # `notarytool submit --wait --timeout 30m`), plus checkout and build.
+    timeout-minutes: 70
     defaults:
       run:
         shell: bash
@@ -119,6 +125,9 @@ jobs:
         with:
           pattern: server-darwin-*
           path: dist
+      - name: Restore the execute bit
+        # upload-artifact/download-artifact don't preserve it.
+        run: chmod +x dist/server-darwin-*/clippings
       - name: Sign and notarize
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -139,11 +148,13 @@ jobs:
           name: server-darwin-x64
           path: dist/server-darwin-x64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: server-darwin-arm64
           path: dist/server-darwin-arm64/
           overwrite: true
+          if-no-files-found: error
 
   # Runs only when Windows signing is configured, in the `signing`
   # environment that the Azure identity's federated credential names.
@@ -190,11 +201,13 @@ jobs:
           name: server-win32-x64
           path: dist/server-win32-x64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: server-win32-arm64
           path: dist/server-win32-arm64/
           overwrite: true
+          if-no-files-found: error
 
   probe-win32-arm64:
     needs: [server, sign-windows]
