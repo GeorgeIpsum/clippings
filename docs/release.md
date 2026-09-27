@@ -174,7 +174,7 @@ With `MARKETPLACE_AUTH` set to `pat`, the job publishes with a `VSCE_PAT` secret
 5. Create the `open-vsx` environment (Settings > Environments > New environment), give it the `v*` tag rule (see [Environment protection](#environment-protection)), and save the token there as the environment secret `OVSX_PAT`.
 6. Set the repository variable `OPEN_VSX_PUBLISH` to `true`.
 
-The `open-vsx` job runs in the `open-vsx` environment and publishes each package with `ovsx publish --skip-duplicate` (pinned to `ovsx@1.2.0` in the workflow), plus `--pre-release` on odd minors. It is skipped unless `OPEN_VSX_PUBLISH` is `true`.
+The `open-vsx` job runs in the `open-vsx` environment and publishes each package with `ovsx publish --no-dependencies --skip-duplicate` (pinned to `ovsx@1.2.0` in the workflow), plus `--pre-release` on odd minors. It is skipped unless `OPEN_VSX_PUBLISH` is `true`.
 
 ## Environment protection
 

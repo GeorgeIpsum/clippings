@@ -262,5 +262,5 @@ jobs:
           flags=()
           [[ $PRE_RELEASE == true ]] && flags+=(--pre-release)
           for vsix in vsix/*.vsix; do
-            npx --yes ovsx@1.2.0 publish --packagePath "$vsix" --skip-duplicate "${flags[@]}"
+            npx --yes ovsx@1.2.0 publish --packagePath "$vsix" --no-dependencies --skip-duplicate "${flags[@]}"
           done
