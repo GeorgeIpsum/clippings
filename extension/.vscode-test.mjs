@@ -26,7 +26,9 @@ const server =
   process.env.CLIPPINGS_SERVER_PATH ?? resolve(here, '../target/debug/clippings' + (process.platform === 'win32' ? '.exe' : ''));
 
 export default defineConfig({
-  files: 'out/test/integration/**/*.test.js',
+  // `index.js` registers a global `afterEach` (spec 12.5); listed
+  // explicitly since it doesn't match the `*.test.js` glob.
+  files: ['out/test/integration/**/*.test.js', 'out/test/integration/index.js'],
   version: process.env.CLIPPINGS_TEST_VSCODE ?? 'stable',
   extensionDevelopmentPath: here,
   workspaceFolder: workspace,

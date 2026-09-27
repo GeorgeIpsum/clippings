@@ -83,10 +83,6 @@ describe('every command', function () {
     await run('clippings.reveal');
     await run('clippings.openUrl');
     await run('clippings.onStatusBarClicked');
-    // `importTodoTreeSettings` asks to overwrite when a Clippings value it
-    // would write is already explicit (spec 7.3 fix round); script an answer
-    // so the command completes whether or not that prompt appears here.
-    api.test.prompts.script('Cancel');
     await run('clippings.importTodoTreeSettings');
     await run('clippings.resetCache');
     await run('clippings.showLog');

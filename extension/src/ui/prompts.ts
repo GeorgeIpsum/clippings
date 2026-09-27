@@ -18,6 +18,16 @@ export class Prompts {
     this.answers.push(...answers);
   }
 
+  /** Test hook: answers queued by `script` that no prompt has consumed yet. */
+  pending(): readonly unknown[] {
+    return [...this.answers];
+  }
+
+  /** Test hook: discards any queued answers, so one test's leak can't reach the next. */
+  clearScript(): void {
+    this.answers.length = 0;
+  }
+
   private scripted<T>(): { answer: T | undefined } | undefined {
     return this.answers.length > 0 ? { answer: this.answers.shift() as T | undefined } : undefined;
   }
