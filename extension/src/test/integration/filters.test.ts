@@ -167,10 +167,11 @@ describe('filters', () => {
   });
 
   it('resets all filters, including the text filter', async () => {
-    api.test.prompts.script('guide');
-    await vscode.commands.executeCommand('clippings.filter');
+    // Before the text filter, which hides `lib`.
     const lib = await itemAt(api, 'workspace', 'lib');
     await vscode.commands.executeCommand('clippings.excludeThisFolder', lib.id);
+    api.test.prompts.script('guide');
+    await vscode.commands.executeCommand('clippings.filter');
     await treeBecomes(api, [
       '(Scan mode: workspace and open files)',
       '(2 filters active)',
