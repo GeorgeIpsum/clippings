@@ -1303,7 +1303,8 @@
     "test:unit": "mocha --ui bdd \"out/test/unit/**/*.test.js\"",
     "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
     "test:integration": "vscode-test",
-    "test": "pnpm dev && pnpm typecheck && pnpm build && pnpm test:unit && pnpm test:scripts && pnpm test:integration",
+    "test:pathforms": "vscode-test --config .vscode-test.pathforms.mjs",
+    "test": "pnpm dev && pnpm typecheck && pnpm build && pnpm test:unit && pnpm test:scripts && pnpm test:integration && pnpm test:pathforms",
     "package": "node scripts/package.mjs"
   },
   "packageManager": "pnpm@10.27.0",
