@@ -12,46 +12,26 @@
 //             in the test output, when the volume has 8.3 names disabled.
 //
 // Run one with `vscode-test --config .vscode-test.pathforms.mjs --label <form>`.
+// `test-support/profile.mjs` removes every scratch directory and link on exit.
 import { defineConfig } from '@vscode/test-cli';
 import { execSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { linkedWorkspace, scratchProfile, serverPath } from './test-support/profile.mjs';
 
 const here = import.meta.dirname;
 const fixture = resolve(here, '../tests/fixtures/workspace');
-const server =
-  process.env.CLIPPINGS_SERVER_PATH ?? resolve(here, '../target/debug/clippings' + (process.platform === 'win32' ? '.exe' : ''));
+const server = serverPath(here);
 const windows = process.platform === 'win32';
 
 /** A fresh scratch directory with a user profile and, under `parent`, a copy of the fixture. */
 function scratch(form, parent = 'real') {
-  // Short: VS Code's IPC socket lives in the user data directory, and macOS
-  // limits socket paths to 103 characters.
-  const dir = mkdtempSync(join(realpathSync.native(tmpdir()), `clp-${form.slice(0, 2)}-`));
-  const copy = join(dir, parent, 'workspace');
-  cpSync(fixture, copy, { recursive: true });
-  mkdirSync(join(dir, 'user-data', 'User'), { recursive: true });
-  writeFileSync(
-    join(dir, 'user-data', 'User', 'settings.json'),
-    JSON.stringify({
-      'chat.disableAIFeatures': true,
-      'workbench.startupEditor': 'none',
-      'telemetry.telemetryLevel': 'off',
-      'git.enabled': false,
-      'update.mode': 'none',
-    }),
-  );
-  return { dir, copy };
+  return scratchProfile(fixture, `clp-${form.slice(0, 2)}-`, parent);
 }
 
 /** A link at <dir>/alias/workspace to the copy: a symlink or an NTFS junction. */
 function linked(form, type) {
   const { dir, copy } = scratch(form);
-  const alias = join(dir, 'alias', 'workspace');
-  mkdirSync(join(dir, 'alias'));
-  symlinkSync(copy, alias, type);
-  return { dir, workspace: alias };
+  return { dir, workspace: linkedWorkspace(dir, copy, type) };
 }
 
 /** The copy's 8.3 short path, or a reason to skip when the volume has none. */
