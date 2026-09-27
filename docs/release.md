@@ -42,8 +42,9 @@ To bump it, edit all four in the same commit (the `channel` line and the three `
    node extension/scripts/version.mjs --tag v0.1.0
    ```
 
-3. Run the release workflow as a dry run and wait for it to pass (see [Dry run](#dry-run)); a dry run needs no tag, so run it from `main` before tagging.
-4. Tag and push:
+3. Wait for CI (`.github/workflows/ci.yml`, which runs on every push to `main`) to pass on that commit: `gh run list --workflow ci.yml --branch main --limit 1`.
+4. Run the release workflow as a dry run and wait for it to pass (see [Dry run](#dry-run)); a dry run needs no tag, so run it from `main` before tagging.
+5. Tag that commit and push the tag:
 
    ```sh
    git tag v0.1.0
@@ -52,10 +53,17 @@ To bump it, edit all four in the same commit (the `channel` line and the three `
 
 The tag starts `.github/workflows/release.yml`, whose jobs run in this order:
 
-1. **plan**: checks the tag against the version and decides the channel and which publishing jobs will run, from whichever of `AZURE_CLIENT_ID`+`AZURE_TENANT_ID`, `VSCE_PAT` and `OVSX_PAT` are configured;
+1. **plan**: refuses the tag unless its commit is on `main` and CI passed on it (below), checks the tag against the version, and decides the channel and which publishing jobs will run, from whichever of `AZURE_CLIENT_ID`+`AZURE_TENANT_ID`, `VSCE_PAT` and `OVSX_PAT` are configured;
 2. **build** (`.github/workflows/build.yml`): builds the server for the nine targets, signs the macOS and Windows binaries when configured, checks each, and packages the ten VSIX files;
 3. **release**: creates the GitHub release for the tag with generated notes, marked pre-release for odd minors, with the ten packages and nine symbol files attached;
 4. **marketplace** and **open-vsx**: publish the ten packages, each only when its credentials are configured (see [Publishing](#publishing)).
+
+`build` builds, checks and packages but runs no tests, so a release is only as tested as CI has made its commit. On a tag, `plan` therefore refuses to go on, and nothing is built, released or published, when:
+
+- the tagged commit is not an ancestor of `origin/main` (a tag on a feature branch, or on a commit that never reached `main`); or
+- the commit's `rust` and `extension` check runs from `ci.yml` are missing, still running, or did not all conclude `success`. `plan` needs at least one of each, so a commit CI never ran on is refused too.
+
+To release after a refusal, fix the cause (merge to `main`, or wait for or fix CI), then either re-run the release run's jobs (if the commit was right and CI was just not finished yet) or delete the tag (`git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0`) and tag the right commit. A manual run from a branch, including every dry run, skips this check.
 
 If a job fails partway, see [Recovering a failed release](#recovering-a-failed-release). Publishing uses `--skip-duplicate`, so re-running a publish job skips the packages that were already accepted.
 
