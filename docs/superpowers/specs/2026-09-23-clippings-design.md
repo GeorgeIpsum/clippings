@@ -396,7 +396,7 @@ On each `clippings/configure` the server diffs against the previous object. Ever
 ### 7.1 Manifest
 
 - `name` `clippings`, display name `Clippings`. Every command's category is `Clippings`. The Marketplace category is `Other`, because Marketplace categories come from a fixed list.
-- `publisher` is the maintainer's Marketplace publisher ID. Until one exists the value is `clippings-dev` and CI publishing jobs are skipped.
+- `publisher` is `shmr`, the maintainer's Marketplace publisher ID, so the extension ID is `shmr.clippings`. CI publishing jobs stay skipped until their repository variables turn them on (`docs/release.md`).
 - `engines.vscode`: the minimum version required by the pinned `vscode-languageclient` 10.x release.
 - `extensionKind: ["workspace"]`, so the platform VSIX installs where the files are and the server runs there.
 - `activationEvents: ["onStartupFinished"]`.

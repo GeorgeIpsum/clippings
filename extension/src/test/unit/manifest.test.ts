@@ -56,7 +56,7 @@ describe('manifest', () => {
   });
 
   it('has what vsce and the Marketplace ask for, so packaging never prompts', () => {
-    assert.equal(manifest.publisher, 'clippings-dev');
+    assert.equal(manifest.publisher, 'shmr');
     assert.equal(manifest.license, 'MIT');
     assert.equal(manifest.repository.type, 'git');
     assert.match(manifest.repository.url, /^https:\/\/github\.com\//);

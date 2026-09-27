@@ -183,8 +183,7 @@ jobs:
           gh release create "$TAG" assets/* --verify-tag --title "Clippings ${TAG#v}" --generate-notes "${flags[@]}"
 
   # Publishing jobs run only when their repository variables turn them on
-  # (MARKETPLACE_AUTH, OPEN_VSX_PUBLISH). Until the publisher `clippings-dev`
-  # is replaced by a real one (spec 7.1), neither is set and both jobs are
+  # (MARKETPLACE_AUTH, OPEN_VSX_PUBLISH); with neither set, both jobs are
   # skipped. Each job's token is a secret of its own environment, which a
   # `v*` tag rule protects. See docs/release.md.
   marketplace:

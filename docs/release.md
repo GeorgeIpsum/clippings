@@ -122,7 +122,7 @@ Only two workflows ever run `build.yml`'s server matrix and packaging job:
 
 ## Publishing
 
-Publishing is off until the extension has a real publisher. Today `publisher` in `extension/package.json` is the placeholder `clippings-dev` (spec 7.1), no publishing variables are set, and both publishing jobs are skipped. Each store is turned on separately, by a **repository variable** (Settings > Secrets and variables > Actions > Variables, at repository scope):
+The Marketplace publisher is `shmr` (`publisher` in `extension/package.json`, spec 7.1), so the extension ID is `shmr.clippings`. Publishing stays off until its variables are set; with none set, both publishing jobs are skipped. Each store is turned on separately, by a **repository variable** (Settings > Secrets and variables > Actions > Variables, at repository scope):
 
 | Variable | Value | Effect on a release |
 |---|---|---|
@@ -135,15 +135,19 @@ The tokens themselves are **environment secrets**, not repository secrets: `VSCE
 
 ### Switching the publisher ID
 
+The publisher is `shmr`. To move to another one:
+
 1. Create a Marketplace publisher at <https://marketplace.visualstudio.com/manage>. Its ID is permanent and becomes the first half of the extension ID, `<publisher>.clippings`.
-2. Replace `clippings-dev` with the new ID in:
+2. Replace `shmr` with the new ID in:
    - `extension/package.json` (`publisher`);
    - `extension/src/test/unit/manifest.test.ts`;
-   - the `getExtension('clippings-dev.clippings')` calls in `extension/src/test/integration/` (`helpers.ts`, `activation.test.ts`, `commands.test.ts`, `server.test.ts`);
+   - the `getExtension('shmr.clippings')` calls in `extension/src/test/integration/` (`helpers.ts`, `activation.test.ts`, `commands.test.ts`, `server.test.ts`);
    - the comment on the `marketplace` job in `.github/workflows/release.yml`, and the log path under [Checking packages](#checking-packages).
 
-   `git grep --untracked -l clippings-dev -- extension .github docs/release.md` lists them. `extension/scripts/vsix.test.mjs` uses the ID only as sample fixture data and can stay.
-3. Update spec 7.1, which records the placeholder.
+   - the sample manifest in `extension/scripts/vsix.test.mjs` (fixture data only, kept in step for readability).
+
+   `git grep -lw shmr -- extension .github docs/release.md` lists them.
+3. Update spec 7.1, which records the publisher.
 
 Use the same ID as the Open VSX namespace so the extension has one ID everywhere.
 
@@ -277,7 +281,7 @@ code --user-data-dir "$dir" --extensions-dir "$dir/ext" --new-window some-folder
 grep -r "Using bundled server" "$dir/logs"
 ```
 
-The Clippings output channel, also written to `logs/*/window1/exthost/clippings-dev.clippings/Clippings.log`, starts with `Using bundled server (<extension>/bin/clippings): clippings <version> (<arch>-<os>)`.
+The Clippings output channel, also written to `logs/*/window1/exthost/shmr.clippings/Clippings.log`, starts with `Using bundled server (<extension>/bin/clippings): clippings <version> (<arch>-<os>)`.
 
 ## Packaging locally
 

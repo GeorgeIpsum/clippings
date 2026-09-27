@@ -6,7 +6,7 @@ These are the known issues left after plan 4's per-task reviews and its whole-br
 
 - Only the dry run has exercised the release workflow (runs 36337659545 and 36353088613). The macOS and Windows signing jobs and the Entra, PAT and Open VSX publishing jobs have been checked statically but never run. Add the first real release's run ID to `docs/release.md`.
 - The tag guard in `release.yml`'s `plan` job was tested by running its shell body locally against real commits, not by pushing a tag. Watch it on the first real tag.
-- The Marketplace publisher is still the placeholder `clippings-dev`. `docs/release.md` lists every file to change.
+- The Marketplace publisher is `shmr`. The Open VSX namespace `shmr` still has to be created (`ovsx create-namespace shmr`) before Open VSX publishing is turned on.
 
 ## Tests
 
