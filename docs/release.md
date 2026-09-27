@@ -71,7 +71,7 @@ The tag starts `.github/workflows/release.yml`, whose jobs run in this order:
 - the tagged commit is not an ancestor of `origin/main` (a tag on a feature branch, or on a commit that never reached `main`); or
 - the commit's `rust` and `extension` check runs from `ci.yml` are missing, still running, or did not all conclude `success`. `plan` needs at least one of each, so a commit CI never ran on is refused too.
 
-To release after a refusal, fix the cause (merge to `main`, or wait for or fix CI), then either re-run the release run's jobs (if the commit was right and CI was just not finished yet) or delete the tag (`git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0`) and tag the right commit. A manual run from a branch, including every dry run, skips this check.
+To release after a refusal, fix the cause (merge to `main`, or wait for or fix CI), then either re-run the release run's jobs (if the commit was right and CI was just not finished yet) or delete the tag (`git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0`) and tag the right commit. A manual run from a branch, including a dry run, skips this check.
 
 If a job fails partway, see [Recovering a failed release](#recovering-a-failed-release). Publishing uses `--skip-duplicate`, so re-running a publish job skips the packages that were already accepted.
 
