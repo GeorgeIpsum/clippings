@@ -28,7 +28,8 @@ jobs:
       matrix:
         include:
           - { target: win32-x64, triple: x86_64-pc-windows-msvc, os: windows-latest }
-          - { target: win32-arm64, triple: aarch64-pc-windows-msvc, os: windows-latest }
+          # The x64 runner cannot run an Arm64 binary; `probe-win32-arm64` does.
+          - { target: win32-arm64, triple: aarch64-pc-windows-msvc, os: windows-latest, probe: --no-probe }
           - { target: darwin-x64, triple: x86_64-apple-darwin, os: macos-latest }
           - { target: darwin-arm64, triple: aarch64-apple-darwin, os: macos-latest }
           - { target: linux-x64, triple: x86_64-unknown-linux-gnu, os: ubuntu-latest }
@@ -55,8 +56,15 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/zig"
           "$RUNNER_TEMP/zig/bin/pip" install cargo-zigbuild==0.23.4 ziglang==0.15.2
           echo "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
+      - name: Set up qemu for the Arm probes
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,arm
       - name: Build
         run: scripts/dist/build.sh ${{ matrix.target }} dist
+      - name: Check glibc floor and probe
+        run: scripts/dist/check.sh ${{ matrix.target }} dist/${{ matrix.target }}/clippings${{ startsWith(matrix.target, 'win32-') && '.exe' || '' }} ${{ matrix.probe }}
       - uses: actions/upload-artifact@v4
         with:
           name: server-${{ matrix.target }}
@@ -68,8 +76,22 @@ jobs:
           path: dist/symbols/
           if-no-files-found: error
 
-  package:
+  probe-win32-arm64:
     needs: server
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: server-win32-arm64
+          path: dist/win32-arm64
+      - run: scripts/dist/check.sh win32-arm64 dist/win32-arm64/clippings.exe
+
+  package:
+    needs: [server, probe-win32-arm64]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
