@@ -1,5 +1,5 @@
 import * as assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 interface Command {
@@ -16,6 +16,10 @@ interface Setting {
   default?: unknown;
 }
 interface Manifest {
+  publisher: string;
+  license: string;
+  repository: { type: string; url: string };
+  scripts: Record<string, string>;
   engines: { vscode: string };
   extensionKind: string[];
   activationEvents: string[];
@@ -49,6 +53,16 @@ describe('manifest', () => {
     assert.deepEqual(manifest.contributes.views['clippings'], [
       { id: 'clippings-view', name: 'TODOs', when: '!clippings-is-empty' },
     ]);
+  });
+
+  it('has what vsce and the Marketplace ask for, so packaging never prompts', () => {
+    assert.equal(manifest.publisher, 'clippings-dev');
+    assert.equal(manifest.license, 'MIT');
+    assert.equal(manifest.repository.type, 'git');
+    assert.match(manifest.repository.url, /^https:\/\/github\.com\//);
+    for (const file of ['README.md', 'LICENSE']) {
+      assert.ok(existsSync(resolve(__dirname, '../../..', file)), `extension/${file}`);
+    }
   });
 
   it('declares 65 settings, all window scoped except server.path', () => {

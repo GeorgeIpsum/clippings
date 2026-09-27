@@ -5,6 +5,15 @@
   "version": "0.1.0",
   "publisher": "clippings-dev",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GeorgeIpsum/clippings.git",
+    "directory": "extension"
+  },
+  "homepage": "https://github.com/GeorgeIpsum/clippings/tree/main/extension#readme",
+  "bugs": {
+    "url": "https://github.com/GeorgeIpsum/clippings/issues"
+  },
   "private": true,
   "categories": [
     "Other"
