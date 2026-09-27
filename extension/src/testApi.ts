@@ -40,6 +40,8 @@ export interface DecorationHooks {
   entry(uri: string): DecorationsParams | undefined;
   readonly generation: number | undefined;
   readonly styleKeys: string[];
+  /** The style keys last set on a specific editor. */
+  appliedKeys(editor: vscode.TextEditor): string[] | undefined;
 }
 
 export interface TestHooks {

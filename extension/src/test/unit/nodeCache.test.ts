@@ -54,4 +54,29 @@ describe('node cache', () => {
     assert.equal(cache.size, 0);
     assert.equal(cache.get('a'), undefined);
   });
+
+  it('prunes a child missing from the next full children list, with its own recorded descendants', () => {
+    const cache = new NodeCache();
+    cache.record(null, [node('a'), node('b')]);
+    cache.pruneMissing(null, ['a', 'b']);
+    cache.record('b', [node('b/c')]);
+    cache.pruneMissing('b', ['b/c']);
+    assert.equal(cache.has('b/c'), true);
+
+    // The next full list for the root drops 'b'.
+    cache.record(null, [node('a')]);
+    cache.pruneMissing(null, ['a']);
+    assert.equal(cache.has('b'), false);
+    assert.equal(cache.has('b/c'), false, 'descendants are pruned too');
+    assert.equal(cache.parent('b/c'), undefined);
+    assert.equal(cache.has('a'), true, 'the kept sibling stays');
+  });
+
+  it('does not prune siblings that a partial recordPath call omits', () => {
+    const cache = new NodeCache();
+    cache.record(null, [node('a'), node('b')]);
+    cache.pruneMissing(null, ['a', 'b']);
+    cache.recordPath([node('a')]);
+    assert.equal(cache.has('b'), true, 'recordPath is not a full children list');
+  });
 });

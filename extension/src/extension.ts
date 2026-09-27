@@ -57,7 +57,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
   updateContext();
 
   const icons = new IconResolver();
-  const decorations = new DecorationManager(icons);
+  const decorations = new DecorationManager(icons, log);
   const cache = new NodeCache();
   const expansion = new Expansion(store);
   const provider = new TreeProvider(server, cache, {
@@ -149,6 +149,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
         get styleKeys() {
           return decorations.styleKeys;
         },
+        appliedKeys: (editor) => decorations.appliedKeys(editor),
       },
       server: {
         get running() {

@@ -19,13 +19,25 @@ export class DecorationManager implements vscode.Disposable {
   private readonly types = new Map<string, vscode.TextEditorDecorationType>();
   /** The last applied decorations per document URI. */
   private readonly cache = new Map<string, DecorationsParams>();
-  /** Keys applied per document, so a later message can clear the absent ones. */
-  private readonly applied = new Map<string, Set<string>>();
+  /**
+   * Keys applied per editor, so a later message can clear the ones a given
+   * editor no longer has (spec 7.7). Per editor, not per document: a split
+   * view has one `TextEditor` per column, each needing its own clear diff -
+   * a shared per-document set would only clear stale keys on the first
+   * editor processed and leave the others stale. A `WeakMap` needs no
+   * cleanup when an editor closes.
+   */
+  private applied = new WeakMap<vscode.TextEditor, Set<string>>();
+  /** Style keys already warned about once (spec 7.7: an unknown key's ranges are ignored). */
+  private readonly warnedUnknownKeys = new Set<string>();
   private readonly appliedEmitter = new vscode.EventEmitter<{ uri: string; source: ApplySource }>();
   /** Fires after decorations are applied to a document's editors. */
   readonly onApplied = this.appliedEmitter.event;
 
-  constructor(private readonly icons: IconResolver) {}
+  constructor(
+    private readonly icons: IconResolver,
+    private readonly log: vscode.LogOutputChannel,
+  ) {}
 
   get currentGeneration(): number | undefined {
     return this.generation;
@@ -39,17 +51,26 @@ export class DecorationManager implements vscode.Disposable {
     return this.cache.get(uri);
   }
 
+  /** The style keys last set on a specific editor (spec 12.5 test hook). */
+  appliedKeys(editor: vscode.TextEditor): string[] | undefined {
+    const keys = this.applied.get(editor);
+    return keys ? [...keys] : undefined;
+  }
+
   /** Creates each decoration type before returning, so later decorations find it. */
   onStyles(msg: StylesParams): void {
     const action = stylesAction(this.generation, msg);
     if (action === 'drop') return;
     if (action === 'reset') {
       this.disposeTypes();
-      this.applied.clear();
+      this.applied = new WeakMap();
       this.cache.clear();
+      this.warnedUnknownKeys.clear();
       this.generation = msg.generation;
     }
+    const replaced = new Set<string>();
     for (const [key, style] of Object.entries(msg.styles)) {
+      if (this.types.has(key)) replaced.add(key);
       this.types.get(key)?.dispose();
       const options = renderOptions(style, {
         themeColor: (id) => new vscode.ThemeColor(id),
@@ -57,6 +78,10 @@ export class DecorationManager implements vscode.Disposable {
       });
       this.types.set(key, vscode.window.createTextEditorDecorationType(options));
     }
+    // A key redefined within the current generation gets a fresh decoration
+    // type; the old one's disposal cleared its highlights, so reapply the
+    // cached ranges under the new type before anyone notices the gap.
+    if (action === 'add') this.reapplyKeys(replaced);
   }
 
   onDecorations(msg: DecorationsParams): void {
@@ -80,9 +105,10 @@ export class DecorationManager implements vscode.Disposable {
   }
 
   onDocumentClosed(document: vscode.TextDocument): void {
-    const uri = document.uri.toString();
-    this.cache.delete(uri);
-    this.applied.delete(uri);
+    this.cache.delete(document.uri.toString());
+    // `applied` is keyed by editor, not URI: its entries for this document's
+    // editors fall out of the WeakMap on their own once nothing else holds
+    // those `TextEditor` objects.
   }
 
   /** A new server instance: forget every type, generation and cached entry. */
@@ -90,16 +116,37 @@ export class DecorationManager implements vscode.Disposable {
     this.disposeTypes();
     this.generation = undefined;
     this.cache.clear();
-    this.applied.clear();
+    this.applied = new WeakMap();
+    this.warnedUnknownKeys.clear();
+  }
+
+  /** Reapplies the cached ranges for `keys` to every editor showing them. */
+  private reapplyKeys(keys: Set<string>): void {
+    if (keys.size === 0) return;
+    for (const [uri, entry] of this.cache) {
+      if (![...keys].some((key) => key in entry.ranges)) continue;
+      const editors = vscode.window.visibleTextEditors.filter((e) => e.document.uri.toString() === uri);
+      for (const editor of editors) {
+        for (const key of keys) {
+          const type = this.types.get(key);
+          if (type) editor.setDecorations(type, (entry.ranges[key] ?? []).map(toRange));
+        }
+      }
+    }
   }
 
   private apply(editor: vscode.TextEditor, msg: DecorationsParams): void {
-    const previous = this.applied.get(msg.uri) ?? new Set<string>();
+    const previous = this.applied.get(editor) ?? new Set<string>();
     for (const key of keysToSet(previous, msg.ranges)) {
       const type = this.types.get(key);
-      if (type) editor.setDecorations(type, (msg.ranges[key] ?? []).map(toRange));
+      if (type) {
+        editor.setDecorations(type, (msg.ranges[key] ?? []).map(toRange));
+      } else if (!this.warnedUnknownKeys.has(key)) {
+        this.warnedUnknownKeys.add(key);
+        this.log.warn(`No decoration style for tag "${key}"; its ranges are ignored.`);
+      }
     }
-    this.applied.set(msg.uri, new Set(Object.keys(msg.ranges)));
+    this.applied.set(editor, new Set(Object.keys(msg.ranges)));
   }
 
   private disposeTypes(): void {

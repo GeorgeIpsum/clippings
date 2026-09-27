@@ -6,6 +6,8 @@ import type { ViewNode } from '../protocol';
 export class NodeCache {
   private readonly nodes = new Map<string, ViewNode>();
   private readonly parents = new Map<string, string | null>();
+  /** The full child ID list `pruneMissing` last saw for a parent. */
+  private readonly childIds = new Map<string | null, string[]>();
 
   get(id: string): ViewNode | undefined {
     return this.nodes.get(id);
@@ -42,6 +44,29 @@ export class NodeCache {
   }
 
   /**
+   * Forgets `parent`'s previous children that are absent from `currentIds`,
+   * along with their own recorded descendants (spec 7.5). A full
+   * `clippings/children` result is the complete child list for `parent`, so
+   * a previously recorded child missing from it means VS Code has already
+   * dropped that node from its data tree; a stray `treeChanged` naming it
+   * later must be filtered out (by `has`) rather than fired, or VS Code logs
+   * "Data tree node not found".
+   */
+  pruneMissing(parent: string | null, currentIds: readonly string[]): void {
+    const previous = this.childIds.get(parent) ?? [];
+    const kept = new Set(currentIds);
+    for (const id of previous) if (!kept.has(id)) this.prune(id);
+    this.childIds.set(parent, [...currentIds]);
+  }
+
+  private prune(id: string): void {
+    for (const child of this.childIds.get(id) ?? []) this.prune(child);
+    this.childIds.delete(id);
+    this.nodes.delete(id);
+    this.parents.delete(id);
+  }
+
+  /**
    * The node's own key: its ID without the parent's ID and the `/` after it
    * (spec 5.12). Keys can contain `/`, so this needs the recorded parent.
    */
@@ -53,5 +78,6 @@ export class NodeCache {
   clear(): void {
     this.nodes.clear();
     this.parents.clear();
+    this.childIds.clear();
   }
 }

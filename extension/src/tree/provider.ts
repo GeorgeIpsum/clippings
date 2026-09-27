@@ -24,7 +24,9 @@ export class TreeProvider implements vscode.TreeDataProvider<string>, vscode.Dis
     const parent = element ?? null;
     const nodes = await this.source.children(parent);
     this.cache.record(parent, nodes);
-    return nodes.map((n) => n.id);
+    const ids = nodes.map((n) => n.id);
+    this.cache.pruneMissing(parent, ids);
+    return ids;
   }
 
   getTreeItem(element: string): vscode.TreeItem {
