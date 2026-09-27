@@ -8,13 +8,17 @@
 #   extension speaks (extension/src/protocol.ts).
 #
 # Linux binaries probe in a container of their own architecture: debian:10,
-# whose glibc is exactly 2.28, for `linux-*`, and Alpine for `alpine-*`. On
+# whose glibc is exactly 2.28, for `linux-*`, and Alpine for `alpine-*`. Both
+# images are pinned below by their multi-arch index digest, so the exact
+# same manifest list resolves on every platform instead of a moving tag. On
 # an x64 host the arm64 and armv7 containers run under qemu, so the host
 # needs binfmt handlers (docker/setup-qemu-action). macOS and Windows
 # binaries run directly; pass --no-probe where the host cannot run them.
 #
 # Usage: scripts/dist/check.sh <vscode-target> <binary> [--no-probe]
 set -euo pipefail
+
+need() { command -v "$1" >/dev/null || { echo "check.sh: $1 not found" >&2; exit 1; }; }
 
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
@@ -28,6 +32,7 @@ resolve_target "$target"
 [[ -f $binary ]] || { echo "$binary: not found" >&2; exit 1; }
 
 if [[ -n $glibc ]]; then
+  need readelf
   highest=$(readelf -V --wide "$binary" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -n 1)
   if [[ -z $highest ]]; then
     echo "$target: no GLIBC_ symbol versions found; is this a glibc binary?" >&2
@@ -42,10 +47,12 @@ fi
 
 case "$target" in
   linux-* | alpine-*)
+    need readelf
     sections=$(readelf -S --wide "$binary")
     symbols=$(readelf -s --wide "$binary")
     ;;
   darwin-*)
+    need nm
     sections=""
     symbols=$(nm "$binary")
     ;;
@@ -68,16 +75,24 @@ if [[ $probe == --no-probe ]]; then
   exit 0
 fi
 
+need jq
+
 case "$target" in
   linux-* | alpine-*)
+    need docker
     case "$target" in
       *-x64) platform=linux/amd64 ;;
       *-arm64) platform=linux/arm64 ;;
       *-armhf) platform=linux/arm/v7 ;;
     esac
     case "$target" in
-      linux-*) image=debian:10 ;;
-      alpine-*) image=alpine:3.22 ;;
+      # debian:10 as of 2026-09-27; index covers linux/amd64, linux/arm/v7,
+      # linux/arm64/v8 and linux/386 (glibc 2.28, matching the floor above).
+      linux-*) image=debian@sha256:58ce6f1271ae1c8a2006ff7d3e54e9874d839f573d8009c20154ad0f2fb0a225 ;;
+      # alpine:3.22 as of 2026-09-27; index covers linux/amd64, linux/arm/v6,
+      # linux/arm/v7, linux/arm64/v8, linux/386, linux/ppc64le, linux/riscv64
+      # and linux/s390x.
+      alpine-*) image=alpine@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 ;;
     esac
     dir=$(cd "$(dirname "$binary")" && pwd)
     json=$(docker run --rm --platform "$platform" -v "$dir:/probe:ro" "$image" "/probe/$(basename "$binary")" probe)
