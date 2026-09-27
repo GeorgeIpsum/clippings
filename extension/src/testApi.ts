@@ -3,9 +3,10 @@
 
 import type * as vscode from 'vscode';
 import type { ApplySource } from './decorations/manager';
-import type { DecorationsParams, StatusParams } from './protocol';
+import type { DecorationsParams, StatusParams, ViewNode } from './protocol';
 import type { PersistedViewState } from './state/viewState';
 import type { StatusBarView } from './status/presentation';
+import type { TreePerf } from './tree/perf';
 import type { TestItem } from './tree/testItems';
 import type { Prompts } from './ui/prompts';
 
@@ -31,6 +32,10 @@ export interface TreeHooks {
   readonly epoch: number;
   /** The line the last todo click flashed. */
   lastFlash(): { uri: string; line: number } | undefined;
+  /** Extension host time spent applying tree updates (spec 13). */
+  readonly perf: TreePerf;
+  /** The last node received for an ID. */
+  node(id: string): ViewNode | undefined;
 }
 
 export interface DecorationHooks {

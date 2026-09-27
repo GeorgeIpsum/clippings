@@ -199,6 +199,8 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
           return expansion.currentEpoch;
         },
         lastFlash: () => flash.last,
+        perf: provider.perf,
+        node: (id) => cache.get(id),
       },
     },
   };
