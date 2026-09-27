@@ -70,10 +70,31 @@ export function withTimeout<T>(what: string, work: Thenable<T>, timeoutMs = 20_0
   });
 }
 
-/** Waits until the server is running and has finished scanning. */
+/**
+ * Waits until the server is running and has finished scanning. Right after a
+ * restart the last status is still the old server's, so this waits for one
+ * from the running server.
+ */
 export async function whenIdle(api: ClippingsApi): Promise<void> {
   const s = api.test.server;
-  await waitFor('an idle server', () => s.running && s.status()?.scanning === false, [s.onStatus, s.onRunning]);
+  await waitFor('an idle server', () => s.running && s.reported && s.status()?.scanning === false, [
+    s.onStatus,
+    s.onRunning,
+  ]);
+}
+
+/**
+ * Waits until the extension host's copy of the editors, selections included,
+ * has caught up with the window. A selection an extension sets applies at
+ * once on the host but reaches the window later, and the window reports each
+ * change back; a report of an older selection can arrive after a newer one
+ * was set and overwrite it, for a moment, in `editor.selection`. The window
+ * answers requests in order and sends each report before the answer to the
+ * next request, so once a round trip to it returns, every earlier report has
+ * arrived.
+ */
+export async function windowCaughtUp(): Promise<void> {
+  await vscode.commands.getCommands(true);
 }
 
 /** A path in the test workspace, with the platform's separators. */

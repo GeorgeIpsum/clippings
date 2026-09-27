@@ -44,6 +44,9 @@ describe('context keys', () => {
     await vscode.commands.executeCommand('clippings.resetCache');
     assert.equal(key('tags-only'), false);
     assert.equal(key('grouped-by-tag'), false);
+    // The keys follow local view state at once; the tree catches up only
+    // after the server's debounced rebuilds, so settle it for the next test.
+    await treeBecomes(api, DEFAULT_TREE);
   });
 
   it('follow the filters', async () => {
