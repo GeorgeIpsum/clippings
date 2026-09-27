@@ -5,6 +5,12 @@
 #   server-<target>    the stripped server binary
 #   symbols-<target>   its debug symbols (dSYM zip, PDB or .debug file)
 #   vsix               the nine platform packages and the universal package
+#
+# Signing is optional and off until configured (docs/release.md, "Signing"):
+# macOS binaries are signed and notarized when the MACOS_CERTIFICATE_P12
+# secret exists, and Windows binaries are signed with Azure Artifact Signing
+# when the WINDOWS_SIGNING_ENDPOINT variable exists. Callers pass
+# `secrets: inherit` and grant `id-token: write`.
 name: Build
 
 on:
@@ -64,6 +70,21 @@ jobs:
           platforms: arm64,arm
       - name: Build
         run: scripts/dist/build.sh ${{ matrix.target }} dist
+      - name: Sign and notarize
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          MACOS_NOTARY_TEAM_ID: ${{ vars.MACOS_NOTARY_TEAM_ID }}
+        run: |
+          if [[ -z $MACOS_CERTIFICATE_P12 ]]; then
+            echo "macOS signing is not configured (no MACOS_CERTIFICATE_P12 secret); the binary stays ad-hoc signed."
+            exit 0
+          fi
+          scripts/dist/sign-macos.sh dist/${{ matrix.target }}/clippings
       - name: Check glibc floor and probe
         run: scripts/dist/check.sh ${{ matrix.target }} dist/${{ matrix.target }}/clippings${{ startsWith(matrix.target, 'win32-') && '.exe' || '' }} ${{ matrix.probe }}
       - uses: actions/upload-artifact@v4
@@ -77,8 +98,60 @@ jobs:
           path: dist/symbols/
           if-no-files-found: error
 
-  probe-win32-arm64:
+  # Runs only when Windows signing is configured, in the `signing`
+  # environment that the Azure identity's federated credential names.
+  sign-windows:
     needs: server
+    if: vars.WINDOWS_SIGNING_ENDPOINT != ''
+    environment: signing
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: server-win32-*
+          path: dist
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.WINDOWS_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Check the signed binaries
+        run: |
+          scripts/dist/check.sh win32-x64 dist/server-win32-x64/clippings.exe
+          scripts/dist/check.sh win32-arm64 dist/server-win32-arm64/clippings.exe --no-probe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-win32-x64
+          path: dist/server-win32-x64/
+          overwrite: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-win32-arm64
+          path: dist/server-win32-arm64/
+          overwrite: true
+
+  probe-win32-arm64:
+    needs: [server, sign-windows]
+    # After signing when it runs; `sign-windows` is skipped when unconfigured.
+    if: ${{ !cancelled() && !failure() }}
     runs-on: windows-11-arm
     defaults:
       run:
@@ -92,7 +165,8 @@ jobs:
       - run: scripts/dist/check.sh win32-arm64 dist/win32-arm64/clippings.exe
 
   package:
-    needs: [server, probe-win32-arm64]
+    needs: [server, sign-windows, probe-win32-arm64]
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
