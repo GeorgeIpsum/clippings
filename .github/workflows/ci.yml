@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   rust:
     strategy:
@@ -13,7 +16,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -24,3 +27,47 @@ jobs:
       - run: cargo test --all --locked
         env:
           INSTA_UPDATE: "no"
+
+  # Extension unit, script and integration tests (spec 12.5) against the
+  # debug server that `pnpm test` builds. VS Code is pinned to the
+  # `engines.vscode` floor on every OS, so the suite is deterministic, its
+  # download is cached, and the manifest's minimum version is proven; one
+  # `stable` job catches upstream changes before users meet them.
+  extension:
+    name: extension (${{ matrix.os }}, VS Code ${{ matrix.vscode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        vscode: ["1.91.0"]
+        include:
+          - os: ubuntu-latest
+            vscode: stable
+    runs-on: ${{ matrix.os }}
+    env:
+      CLIPPINGS_TEST_VSCODE: ${{ matrix.vscode }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: extension/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - name: Cache the VS Code download
+        if: matrix.vscode != 'stable'
+        uses: actions/cache@v4
+        with:
+          path: extension/.vscode-test
+          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ matrix.vscode }}
+      - run: pnpm -C extension install --frozen-lockfile
+      - name: pnpm -C extension test
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm -C extension test
+      - name: pnpm -C extension test
+        if: runner.os != 'Linux'
+        run: pnpm -C extension test
