@@ -41,6 +41,32 @@ export function shouldOffer(
   );
 }
 
+/**
+ * How many of `writes` would overwrite a Clippings value already explicit at
+ * the same scope (ruling: on-demand import asks before overwriting).
+ */
+export function overwriteCount(writes: readonly Write[], inspectClippings: (key: string) => Inspected | undefined): number {
+  return writes.filter((w) => {
+    const i = inspectClippings(w.key);
+    return w.scope === 'global' ? i?.globalValue !== undefined : i?.workspaceValue !== undefined;
+  }).length;
+}
+
+/**
+ * Applies `writes` in order through `write`, which reports its own failures
+ * (spec 10.2); a failure does not stop the rest. Returns how many succeeded.
+ */
+export async function applyWrites(
+  writes: readonly Write[],
+  write: (key: string, value: unknown, scope: Scope) => Promise<boolean>,
+): Promise<number> {
+  let written = 0;
+  for (const w of writes) {
+    if (await write(w.key, w.value, w.scope)) written++;
+  }
+  return written;
+}
+
 export function importPlan(inspect: (key: string) => Inspected | undefined): ImportPlan {
   const plan: ImportPlan = { writes: [], skipped: [] };
   for (const key of TODO_TREE_KEYS) {

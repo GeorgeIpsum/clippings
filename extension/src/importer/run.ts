@@ -2,8 +2,9 @@
 // Import Settings from Todo Tree command.
 
 import * as vscode from 'vscode';
+import type { SettingWriter } from '../config/writes';
 import type { Prompts } from '../ui/prompts';
-import { importPlan, shouldOffer, type Inspected } from './plan';
+import { applyWrites, importPlan, overwriteCount, shouldOffer, type Inspected } from './plan';
 
 export const IMPORT_OFFER_KEY = 'importOffer';
 
@@ -16,6 +17,7 @@ export class TodoTreeImporter {
     private readonly context: vscode.ExtensionContext,
     private readonly prompts: Prompts,
     private readonly log: vscode.LogOutputChannel,
+    private readonly writer: SettingWriter,
   ) {}
 
   /** On activation: offers the import once the conditions of spec 7.3 hold. */
@@ -32,20 +34,27 @@ export class TodoTreeImporter {
     if (choice === 'Never') await this.context.globalState.update(IMPORT_OFFER_KEY, 'never');
   }
 
-  /** Copies each carried todo-tree value to the same scope under `clippings.*`. */
+  /**
+   * Copies each carried todo-tree value to the same scope under `clippings.*`.
+   * On demand, this can overwrite explicit Clippings values; when it would,
+   * it asks first (the activation offer never reaches this with a conflict,
+   * since it only fires when no Clippings key is set).
+   */
   async run(): Promise<number> {
     const plan = importPlan((key) => inspect('todo-tree', key));
-    for (const line of plan.skipped) this.log.info(`Import: ${line}`);
-    let written = 0;
-    for (const w of plan.writes) {
-      const target = w.scope === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
-      try {
-        await vscode.workspace.getConfiguration('clippings').update(w.key, w.value, target);
-        written++;
-      } catch (err) {
-        this.log.warn(`Import: could not write clippings.${w.key}: ${String(err)}`);
-      }
+    const conflicts = overwriteCount(plan.writes, (key) => inspect('clippings', key));
+    if (conflicts > 0) {
+      const noun = conflicts === 1 ? 'setting' : 'settings';
+      const choice = await this.prompts.message(
+        'warning',
+        `Overwrite ${conflicts} Clippings ${noun} with your Todo Tree settings?`,
+        'Overwrite',
+        'Cancel',
+      );
+      if (choice !== 'Overwrite') return 0;
     }
+    for (const line of plan.skipped) this.log.info(`Import: ${line}`);
+    const written = await applyWrites(plan.writes, (key, value, scope) => this.writer.write(key, value, scope));
     const noun = written === 1 ? 'setting' : 'settings';
     void this.prompts.message('info', `Clippings: imported ${written} ${noun} from Todo Tree.`);
     return written;

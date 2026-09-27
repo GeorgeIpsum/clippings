@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CARRIED_KEYS, CLIPPINGS_KEYS, DROPPED_KEYS, mapSetting, NEW_KEYS } from '../../importer/keys';
-import { importPlan, shouldOffer, type Inspected } from '../../importer/plan';
+import { applyWrites, importPlan, overwriteCount, shouldOffer, type Inspected, type Write } from '../../importer/plan';
 
 const manifest = JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf8')) as {
   contributes: { configuration: { properties: Record<string, unknown> }[] };
@@ -68,5 +68,44 @@ describe('import plan', () => {
       'todo-tree.general.tags: skipped the workspace folder value, which todo-tree ignored',
       'todo-tree.ripgrep.ripgrepArgs has no Clippings equivalent; skipped its global value',
     ]);
+  });
+});
+
+describe('overwrite count', () => {
+  it('counts only the planned writes that already have a Clippings value at that same scope', () => {
+    const writes: Write[] = [
+      { key: 'general.tags', value: ['A'], scope: 'global' },
+      { key: 'general.tags', value: ['B'], scope: 'workspace' },
+      { key: 'tree.buttons.export', value: true, scope: 'global' },
+    ];
+    const values: Record<string, Inspected> = {
+      'general.tags': { globalValue: ['X'] },
+      'tree.buttons.export': { workspaceValue: true },
+    };
+    assert.equal(
+      overwriteCount(writes, (key) => values[key]),
+      1,
+    );
+    assert.equal(
+      overwriteCount(writes, () => undefined),
+      0,
+    );
+  });
+});
+
+describe('apply writes', () => {
+  it('keeps writing after one fails (spec 10.2), and counts only the successes', async () => {
+    const attempted: string[] = [];
+    const write = async (key: string): Promise<boolean> => {
+      attempted.push(key);
+      return key !== 'general.tags';
+    };
+    const writes: Write[] = [
+      { key: 'general.tags', value: ['A'], scope: 'workspace' },
+      { key: 'tree.buttons.export', value: true, scope: 'global' },
+    ];
+    const written = await applyWrites(writes, write);
+    assert.equal(written, 1);
+    assert.deepEqual(attempted, ['general.tags', 'tree.buttons.export']);
   });
 });

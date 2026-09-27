@@ -147,7 +147,7 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
       revealer.onActiveEditor(editor);
     }),
   );
-  const importer = new TodoTreeImporter(context, prompts, log);
+  const importer = new TodoTreeImporter(context, prompts, log, writer);
   context.subscriptions.push(
     vscode.commands.registerCommand('clippings.importTodoTreeSettings', () => importer.run()),
   );

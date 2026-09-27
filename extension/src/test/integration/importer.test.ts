@@ -1,6 +1,7 @@
 import * as assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import * as vscode from 'vscode';
+import { SettingWriter } from '../../config/writes';
 import type { ClippingsApi } from '../../testApi';
 import { DEFAULT_TREE } from './fixture';
 import { getApi, nextEvent, treeBecomes, whenIdle, workspacePath } from './helpers';
@@ -68,5 +69,84 @@ describe('todo-tree settings import', () => {
     const done = api.test.prompts.shown.at(-1);
     assert.deepEqual(done, { kind: 'info', message: 'Clippings: imported 3 settings from Todo Tree.', actions: [] });
     assert.equal(api.test.contextKeys()['clippings-show-export-button'], true);
+  });
+});
+
+describe('todo-tree import: write failures', () => {
+  it('shows a warning for a write that fails, and still writes the next one', async () => {
+    const api = await getApi();
+    // The real `SettingWriter` the importer now writes through (spec 10.2):
+    // an unregistered key is refused by VS Code before any file is touched,
+    // giving a write failure with no side effect on the real settings file.
+    const writer = new SettingWriter(api.test.prompts);
+    const before = api.test.prompts.shown.length;
+
+    const failed = await writer.write('thisKeyIsNotRegistered', 'x', 'workspace');
+    const succeeded = await writer.write('tree.buttons.export', true, 'workspace');
+
+    assert.equal(failed, false, 'the unregistered write is reported as failed');
+    assert.equal(succeeded, true, 'the next write still ran');
+    const warning = api.test.prompts.shown
+      .slice(before)
+      .find((s) => s.kind === 'warning' && s.message.startsWith('Clippings: could not update clippings.thisKeyIsNotRegistered:'));
+    assert.ok(warning, 'a warning was shown for the failed write');
+    assert.equal(
+      vscode.workspace.getConfiguration('clippings').inspect('tree.buttons.export')?.workspaceValue,
+      true,
+    );
+
+    await vscode.workspace
+      .getConfiguration('clippings')
+      .update('tree.buttons.export', undefined, vscode.ConfigurationTarget.Workspace);
+  });
+});
+
+describe('todo-tree import: overwrite confirmation', () => {
+  let api: ClippingsApi;
+
+  before(async () => {
+    api = await getApi();
+    await whenIdle(api);
+    await writeWorkspaceSettings(
+      { 'todo-tree.general.tags': ['BUG', 'TODO'], 'clippings.general.tags': ['EXISTING'] },
+      'clippings',
+    );
+  });
+
+  after(async () => {
+    await writeWorkspaceSettings(undefined, 'clippings');
+    await whenIdle(api);
+    await treeBecomes(api, DEFAULT_TREE);
+  });
+
+  it('does nothing when the user cancels', async () => {
+    api.test.prompts.script('Cancel');
+    await vscode.commands.executeCommand('clippings.importTodoTreeSettings');
+    assert.deepEqual(vscode.workspace.getConfiguration('clippings').inspect('general.tags')?.workspaceValue, [
+      'EXISTING',
+    ]);
+    assert.deepEqual(api.test.prompts.shown.at(-1), {
+      kind: 'warning',
+      message: 'Overwrite 1 Clippings setting with your Todo Tree settings?',
+      actions: ['Overwrite', 'Cancel'],
+    });
+  });
+
+  it('replaces the existing values when the user overwrites', async () => {
+    api.test.prompts.script('Overwrite');
+    const changed = nextEvent('the overwrite', vscode.workspace.onDidChangeConfiguration, (e) =>
+      e.affectsConfiguration('clippings.general.tags'),
+    );
+    await vscode.commands.executeCommand('clippings.importTodoTreeSettings');
+    await changed;
+    assert.deepEqual(vscode.workspace.getConfiguration('clippings').inspect('general.tags')?.workspaceValue, [
+      'BUG',
+      'TODO',
+    ]);
+    assert.deepEqual(api.test.prompts.shown.at(-1), {
+      kind: 'info',
+      message: 'Clippings: imported 1 setting from Todo Tree.',
+      actions: [],
+    });
   });
 });
