@@ -49,6 +49,8 @@ export interface DecorationHooks {
 export interface TestHooks {
   /** Answers prompts and records messages. */
   readonly prompts: Prompts;
+  /** Runs the activation-time import offer again. */
+  offerImport(): Promise<void>;
   viewState(): PersistedViewState;
   /** The context keys last set (spec 7.6). */
   contextKeys(): Readonly<Record<string, boolean | string>>;

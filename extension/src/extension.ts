@@ -21,6 +21,7 @@ import { registerExport } from './export/documents';
 import { IconFiles } from './icons/files';
 import { IconResolver } from './icons/resolver';
 import { invalidIcons } from './icons/svg';
+import { TodoTreeImporter } from './importer/run';
 import type { StatusParams } from './protocol';
 import { ServerConnection } from './server/connection';
 import { ViewStateStore } from './state/viewState';
@@ -146,13 +147,19 @@ export function activate(context: vscode.ExtensionContext): ClippingsApi {
       revealer.onActiveEditor(editor);
     }),
   );
+  const importer = new TodoTreeImporter(context, prompts, log);
+  context.subscriptions.push(
+    vscode.commands.registerCommand('clippings.importTodoTreeSettings', () => importer.run()),
+  );
   void server.start();
+  void importer.offer();
 
   const manifest = context.extension.packageJSON as { version: string };
   return {
     version: manifest.version,
     test: {
       prompts,
+      offerImport: () => importer.offer(),
       viewState: () => store.snapshot(),
       contextKeys: () => contextKeys.values,
       statusBar: () => statusController.shown,
