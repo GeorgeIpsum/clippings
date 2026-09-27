@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { schemeList } from '../config/schemes';
 import type { Settings, ViewNode } from '../protocol';
 import type { NodeCache } from './nodeCache';
+import { dbgLog } from '../server/connection';
 
 export interface RevealDeps {
   find(uri: string, line: number | null): Promise<ViewNode[][]>;
@@ -27,7 +28,9 @@ export class Revealer implements vscode.Disposable {
     const target = first?.at(-1);
     if (!target) return false;
     for (const path of paths) this.deps.cache.recordPath(path);
+    dbgLog(`DBG reveal start ${target.id.slice(-60)}`);
     await this.deps.view.reveal(target.id, { select: true, focus, expand: false });
+    dbgLog(`DBG reveal done ${target.id.slice(-60)}`);
     return true;
   }
 

@@ -74,6 +74,37 @@ jobs:
         if: runner.os != 'Linux'
         run: pnpm -C extension test
 
+  # TEMPORARY flake hunt: repeats the macOS integration run. Reverted before merge.
+  flake-hunt:
+    name: flake hunt (macos-latest, ${{ matrix.rep }})
+    strategy:
+      fail-fast: false
+      matrix:
+        rep: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      CLIPPINGS_TEST_VSCODE: "1.91.0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: extension/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.3
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - uses: actions/cache@v4
+        with:
+          path: extension/.vscode-test
+          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-1.91.0
+      - run: pnpm -C extension install --frozen-lockfile
+      - run: pnpm -C extension dev && pnpm -C extension build
+      - run: pnpm -C extension test:integration
+
   # The workflows and the release scripts. shellcheck comes with the runner
   # image; actionlint also runs it on every workflow `run:` block.
   lint:
