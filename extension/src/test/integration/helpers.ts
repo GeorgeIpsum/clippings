@@ -1,6 +1,7 @@
 // Shared helpers for the integration tests. Waits are driven by real
 // signals from the extension, never by fixed sleeps.
 
+import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type { ClippingsApi } from '../../testApi';
 import type { TestItem } from '../../tree/testItems';
@@ -75,10 +76,17 @@ export async function whenIdle(api: ClippingsApi): Promise<void> {
   await waitFor('an idle server', () => s.running && s.status()?.scanning === false, [s.onStatus, s.onRunning]);
 }
 
+/** A path in the test workspace, with the platform's separators. */
 export function workspacePath(...parts: string[]): string {
   const root = process.env['CLIPPINGS_TEST_WORKSPACE'];
   if (!root) throw new Error('CLIPPINGS_TEST_WORKSPACE is not set');
-  return [root, ...parts].join('/');
+  return join(root, ...parts);
+}
+
+/** A workspace path with `/` separators, as node IDs and filter globs spell it. */
+export function slashPath(...parts: string[]): string {
+  const path = workspacePath(...parts);
+  return process.platform === 'win32' ? path.replaceAll('\\', '/') : path;
 }
 
 /**

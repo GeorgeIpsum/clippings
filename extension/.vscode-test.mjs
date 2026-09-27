@@ -2,12 +2,15 @@
 // workspace and uses a fresh user data directory, so tests can edit files
 // and settings without touching the repository or the user's profile.
 import { defineConfig } from '@vscode/test-cli';
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const here = import.meta.dirname;
-const scratch = mkdtempSync(join(tmpdir(), 'clippings-test-'));
+// The real path: on Windows the temporary directory can be an 8.3 short
+// name (`RUNNER~1`), and on macOS a symlink (`/var` to `/private/var`), so
+// tests and the server would otherwise spell the same file two ways.
+const scratch = mkdtempSync(join(realpathSync.native(tmpdir()), 'clippings-test-'));
 const workspace = join(scratch, 'workspace');
 cpSync(resolve(here, '../tests/fixtures/workspace'), workspace, { recursive: true });
 // Quiet, predictable user settings for the test profile.

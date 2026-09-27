@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import * as vscode from 'vscode';
 import type { ClippingsApi } from '../../testApi';
 import { DEFAULT_TREE } from './fixture';
-import { getApi, itemAt, setSetting, treeBecomes, whenIdle, workspacePath } from './helpers';
+import { getApi, itemAt, setSetting, treeBecomes, whenIdle, slashPath, workspacePath } from './helpers';
 
 describe('filters', () => {
   let api: ClippingsApi;
@@ -49,8 +49,8 @@ describe('filters', () => {
     const src = await itemAt(api, 'workspace', 'src');
     await vscode.commands.executeCommand('clippings.excludeThisFolder', src.id);
     await treeBecomes(api, DEFAULT_TREE.slice(0, 9).toSpliced(1, 0, '(1 filter active)'));
-    assert.deepEqual(api.test.viewState().excludeGlobs, [`${workspacePath('src')}/**/*`]);
-    api.test.prompts.script([`Exclude Folder: ${workspacePath('src')}`]);
+    assert.deepEqual(api.test.viewState().excludeGlobs, [`${slashPath('src')}/**/*`]);
+    api.test.prompts.script([`Exclude Folder: ${slashPath('src')}`]);
     await vscode.commands.executeCommand('clippings.removeFilter');
     await treeBecomes(api, DEFAULT_TREE);
   });
@@ -64,7 +64,7 @@ describe('filters', () => {
       'workspace',
       ...DEFAULT_TREE.slice(6),
     ]);
-    assert.deepEqual(api.test.viewState().excludeGlobs, [workspacePath('docs', 'plan.md')]);
+    assert.deepEqual(api.test.viewState().excludeGlobs, [slashPath('docs', 'plan.md')]);
   });
 
   it('shows only a folder, then only a folder and its subfolders', async () => {
@@ -88,7 +88,7 @@ describe('filters', () => {
       'workspace',
       ...DEFAULT_TREE.slice(9),
     ]);
-    assert.deepEqual(api.test.viewState().includeGlobs, [`${workspacePath('src')}/**/*`]);
+    assert.deepEqual(api.test.viewState().includeGlobs, [`${slashPath('src')}/**/*`]);
   });
 
   it('filters a folder whose name has spaces and brackets', async () => {
@@ -114,7 +114,7 @@ describe('filters', () => {
         '    page.ts',
         '      TODO render the page',
       ]);
-      assert.deepEqual(api.test.viewState().includeGlobs, [`${workspacePath('app [[]slug[]] (old)')}/*`]);
+      assert.deepEqual(api.test.viewState().includeGlobs, [`${slashPath('app [[]slug[]] (old)')}/*`]);
       await vscode.commands.executeCommand('clippings.resetAllFilters');
       await treeBecomes(api, withFolder);
       const appAgain = await itemAt(api, 'workspace', folder);

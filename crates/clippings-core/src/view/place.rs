@@ -151,13 +151,10 @@ pub fn place(settings: &Settings, files: &[EffectiveFile], tree_roots: &[PathBuf
                         );
                         n.path = file.path.map(Path::to_path_buf);
                         n.uri = Some(disk_uri.clone().unwrap_or_else(|| uri.clone()));
+                        // `/` separators on every platform, as in folder labels.
                         let dir = file.path.and_then(|p| p.parent()).map(|d| match root {
-                            Some(r) => d
-                                .strip_prefix(r)
-                                .unwrap_or(d)
-                                .to_string_lossy()
-                                .into_owned(),
-                            None => d.to_string_lossy().into_owned(),
+                            Some(r) => slash_path(d.strip_prefix(r).unwrap_or(d)),
+                            None => slash_path(d),
                         });
                         if view.flat || root.is_none() {
                             n.path_label = dir.filter(|d| !d.is_empty()).map(|d| format!("({d})"));
