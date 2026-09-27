@@ -47,14 +47,20 @@ describe('context keys', () => {
   });
 
   it('follow the filters', async () => {
-    api.test.prompts.script('guide');
-    await vscode.commands.executeCommand('clippings.filter');
-    assert.equal(key('filtered'), true);
-    assert.equal(key('global-filter-active'), 'guide');
-    const lib = await itemAt(api, 'workspace', 'lib');
-    await vscode.commands.executeCommand('clippings.excludeThisFolder', lib.id);
-    assert.equal(key('folder-filter-active'), true);
-    await vscode.commands.executeCommand('clippings.resetAllFilters');
+    // The text filter must keep `lib` visible: the server applies it
+    // asynchronously, so `lib` is looked up either before or after it lands.
+    api.test.prompts.script('long note');
+    try {
+      await vscode.commands.executeCommand('clippings.filter');
+      assert.equal(key('filtered'), true);
+      assert.equal(key('global-filter-active'), 'long note');
+      const lib = await itemAt(api, 'workspace', 'lib');
+      await vscode.commands.executeCommand('clippings.excludeThisFolder', lib.id);
+      assert.equal(key('folder-filter-active'), true);
+    } finally {
+      // A filter left behind would hide the sub-tags the next test waits for.
+      await vscode.commands.executeCommand('clippings.resetAllFilters');
+    }
     assert.equal(key('filtered'), false);
     assert.equal(key('folder-filter-active'), false);
   });
