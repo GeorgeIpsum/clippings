@@ -333,7 +333,7 @@ describe('server lifecycle', () => {
         },
         [s.onStatus],
       );
-      assert.match(status.warnings[0] ?? '', /^Invalid configuration, using the defaults: invalid type/);
+      assert.match(status.warnings[0] ?? '', /^Invalid configuration, using the defaults: general\.schemes: invalid type/);
       const warned = api.test.prompts.shown.some(
         (p) => p.kind === 'warning' && p.message.includes('Invalid configuration'),
       );

@@ -802,7 +802,7 @@ impl Server {
                 self.rescan_all(now);
                 self.schedule_view(now, true);
             }
-            method::CONFIGURE => match serde_json::from_value::<Settings>(n.params) {
+            method::CONFIGURE => match serde_path_to_error::deserialize::<_, Settings>(n.params) {
                 Ok(s) => {
                     let cleared = self.config_warning.take().is_some();
                     self.configure(s, now);

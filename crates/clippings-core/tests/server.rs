@@ -381,13 +381,36 @@ fn a_setting_of_the_wrong_type_starts_on_the_defaults_with_a_warning() {
     });
     let warning = status["warnings"][0].as_str().unwrap();
     assert!(
-        warning.starts_with("Invalid configuration, using the defaults: invalid type"),
+        warning.starts_with(
+            "Invalid configuration, using the defaults: general.schemes: invalid type"
+        ),
         "{warning}"
     );
     let name = root.file_name().unwrap().to_string_lossy().to_string();
     assert!(c.settled_top().contains(&name), "the tree is served");
     c.notify("clippings/configure", settings());
     c.expect("clippings/status", |s| s["warnings"] == json!([]));
+    c.shutdown();
+}
+
+#[test]
+fn a_nested_setting_of_the_wrong_type_names_its_full_path() {
+    let (_t, root) = workspace();
+    let mut c = Client::start(
+        &root,
+        json!({ "highlights": { "customHighlight": [] } }),
+        true,
+    );
+    let status = c.expect("clippings/status", |s| {
+        s["warnings"].as_array().is_some_and(|w| !w.is_empty())
+    });
+    let warning = status["warnings"][0].as_str().unwrap();
+    assert!(
+        warning.starts_with(
+            "Invalid configuration, using the defaults: highlights.customHighlight: invalid type"
+        ),
+        "{warning}"
+    );
     c.shutdown();
 }
 

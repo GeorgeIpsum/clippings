@@ -27,7 +27,7 @@ fn capabilities() -> serde_json::Value {
 /// file can hold a value of the wrong type, which VS Code passes on.
 fn take_unreadable_settings(raw: &mut Value) -> Option<String> {
     let settings = raw.get_mut("initializationOptions")?.get_mut("settings")?;
-    let error = serde_json::from_value::<Settings>(settings.clone()).err()?;
+    let error = serde_path_to_error::deserialize::<_, Settings>(settings.clone()).err()?;
     *settings = json!({});
     Some(error.to_string())
 }

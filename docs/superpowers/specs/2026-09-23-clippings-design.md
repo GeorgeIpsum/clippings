@@ -378,7 +378,7 @@ All `clippings.*` settings are declared with window scope, except `server.path`,
 
 The object has `general`, `highlights`, `filtering`, `tree` and `regex` as nested objects mirroring the settings groups, plus `viewState { flat, tagsOnly, expanded, groupedByTag, groupedBySubTag, filter, includeGlobs, excludeGlobs }`, `filesExclude`, `searchExclude` and `explorerCompactFolders`. Unknown fields are ignored. The client sends each group as VS Code resolves it, including client-only keys such as `tree.buttons`, `filtering.scopes` and `general.statusBarClickBehaviour`, which the server ignores.
 
-VS Code passes on whatever a settings file holds, including a value of the wrong type. The server then cannot read the object: at `initialize` it starts on the defaults, and on `clippings/configure` it keeps the previous object. Either way `clippings/status` carries a warning until a readable object arrives.
+VS Code passes on whatever a settings file holds, including a value of the wrong type. The server then cannot read the object: at `initialize` it starts on the defaults, and on `clippings/configure` it keeps the previous object. Either way `clippings/status` carries a warning until a readable object arrives, and that warning names the offending setting by its full path, e.g. `general.schemes: invalid type: string "file", expected a sequence`.
 
 On each `clippings/configure` the server diffs against the previous object. Every row whose fields changed applies:
 
