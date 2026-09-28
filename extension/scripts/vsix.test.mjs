@@ -76,7 +76,7 @@ const SERVERS = {
 function manifest({ target, preRelease = true, version = '0.1.0' }) {
   const platform = target ? ` TargetPlatform="${target}"` : '';
   const property = preRelease ? '<Property Id="Microsoft.VisualStudio.Code.PreRelease" Value="true" />' : '';
-  return `<PackageManifest><Metadata><Identity Language="en-US" Id="clippings" Version="${version}" Publisher="clippings-dev"${platform}/><Properties>${property}</Properties></Metadata></PackageManifest>`;
+  return `<PackageManifest><Metadata><Identity Language="en-US" Id="clippings" Version="${version}" Publisher="shmr"${platform}/><Properties>${property}</Properties></Metadata></PackageManifest>`;
 }
 
 /** The entries of a well-formed package, read back through readZip. */

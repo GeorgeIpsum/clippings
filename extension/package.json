@@ -3,7 +3,7 @@
   "displayName": "Clippings",
   "description": "Fast TODO tree backed by a Rust language server, with todo-tree's features and settings.",
   "version": "0.1.0",
-  "publisher": "clippings-dev",
+  "publisher": "shmr",
   "license": "MIT",
   "repository": {
     "type": "git",

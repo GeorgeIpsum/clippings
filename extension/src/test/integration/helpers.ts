@@ -7,7 +7,7 @@ import type { ClippingsApi } from '../../testApi';
 import type { TestItem } from '../../tree/testItems';
 
 export async function getApi(): Promise<ClippingsApi> {
-  const ext = vscode.extensions.getExtension<ClippingsApi>('clippings-dev.clippings');
+  const ext = vscode.extensions.getExtension<ClippingsApi>('shmr.clippings');
   if (!ext) throw new Error('extension not installed');
   return ext.activate();
 }

@@ -15,7 +15,7 @@ describe('every command', function () {
     api = await getApi();
     await whenIdle(api);
     await treeBecomes(api, DEFAULT_TREE);
-    const ext = vscode.extensions.getExtension('clippings-dev.clippings');
+    const ext = vscode.extensions.getExtension('shmr.clippings');
     const manifest = ext?.packageJSON as { contributes: { commands: { command: string }[] } };
     declared = manifest.contributes.commands.map((c) => c.command);
   });

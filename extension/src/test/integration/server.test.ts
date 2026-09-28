@@ -535,7 +535,7 @@ let testLog: vscode.LogOutputChannel | undefined;
 function testHost(): ConnectionHost & { readonly errors: string[] } {
   const log = (testLog ??= vscode.window.createOutputChannel('Clippings test', { log: true }));
   const store = new ViewStateStore(new MemoryMemento());
-  const ext = vscode.extensions.getExtension('clippings-dev.clippings');
+  const ext = vscode.extensions.getExtension('shmr.clippings');
   assert.ok(ext);
   const context = {
     extensionPath: ext.extensionPath,
