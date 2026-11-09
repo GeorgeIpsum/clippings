@@ -7,3 +7,4 @@ node_modules/
 /.superpowers/
 !/tests/fixtures/workspace/node_modules/
 /dist/
+.tok
