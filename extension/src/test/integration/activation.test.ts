@@ -7,6 +7,8 @@ describe('activation', () => {
     assert.ok(ext, 'extension is installed');
     const api = (await ext.activate()) as { version: string };
     assert.ok(ext.isActive);
-    assert.equal(api.version, '0.1.0');
+    // The manifest is the one source of the version, so a release bump needs no test edit.
+    assert.equal(api.version, ext.packageJSON.version);
+    assert.match(api.version, /^\d+\.\d+\.\d+$/);
   });
 });
